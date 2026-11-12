@@ -236,13 +236,16 @@ unsafe fn read<D: Device>(
     // SAFETY: the OCB comes from `ocb_calloc` and only this callback uses it now
     // (see the module docs).
     let docb = unsafe { &mut *ocb.cast::<DeviceOcb>() };
-    if docb.ocb.offset == 0 || docb.snapshot.is_none() {
-        match device.read() {
-            Ok(content) => docb.snapshot = Some(content),
+    // One snapshot per open file, taken on its first read. Keying on
+    // `snapshot` rather than on offset 0 keeps an empty snapshot too, so a
+    // reader that saw end of file keeps seeing it.
+    let snapshot: &[u8] = match docb.snapshot {
+        Some(ref content) => content,
+        None => match device.read() {
+            Ok(content) => docb.snapshot.insert(content),
             Err(e) => return errno_of(&e),
-        }
-    }
-    let snapshot = docb.snapshot.as_deref().unwrap_or(&[]);
+        },
+    };
     // A negative offset cannot come from `iofunc_lseek_default`; treat it, like
     // any offset past the end, as end of file.
     let start = usize::try_from(docb.ocb.offset)

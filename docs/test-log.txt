@@ -57,6 +57,7 @@ test cat_reads_device_content ... ok
 test chunked_read_returns_full_content_then_eof ... ok
 test devctl_round_trip ... ok
 test drop_detaches_path ... ok
+test empty_snapshot_stays_at_eof_for_its_open ... ok
 test panicking_device_returns_eio ... ok
 test write_then_read_back ... ok
 

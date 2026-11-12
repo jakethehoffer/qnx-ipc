@@ -12,8 +12,11 @@
 //!   same protocol.
 //! - A received [`Request`] is answered at most once, by
 //!   [`reply`](Request::reply) or [`reply_error`](Request::reply_error). If it
-//!   is dropped unanswered it replies `ENOSYS` (`EIO` during a panic), so a
-//!   client is never left blocked.
+//!   is dropped unanswered it replies `ENOSYS` (`EIO` during a panic): a
+//!   request that is dropped, or whose handler panics, still answers its
+//!   client (the limits, such as a request leaked with `mem::forget`, are
+//!   listed under "Known limits" in `docs/architecture.md`). A request borrows
+//!   the channel it came from, so it cannot outlive it.
 //! - [`Channel::serve`] runs a [`Handler`] over every message and pulse, with
 //!   each call inside `catch_unwind`.
 //! - [`Pulse`]s are small non-blocking notifications; a [`PulseTimer`] sends one

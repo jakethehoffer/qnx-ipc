@@ -62,7 +62,8 @@ impl NamedChannel {
     }
 
     /// Blocks until a message or a pulse arrives, and receives it into `buf`,
-    /// like [`Channel::receive`](crate::Channel::receive).
+    /// like [`Channel::receive`](crate::Channel::receive). A received request
+    /// borrows the channel, so it cannot outlive it.
     ///
     /// QNX system messages (kinds `0..=0x1FF`), which any client can send, never
     /// reach the caller: an `_IO_CONNECT` (connect) message is answered `EOK`
@@ -77,7 +78,7 @@ impl NamedChannel {
     /// A kernel timeout armed with `TimerTimeout` just before this call applies
     /// to the first receive only: if that one gets a system message, the next
     /// receive is not covered.
-    pub fn receive<'b>(&self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
+    pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
         receive_on(self.chid, buf, SystemMessages::Answer)
     }
 

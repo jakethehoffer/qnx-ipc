@@ -38,7 +38,10 @@ impl SenderInfo {
 /// [`reply`](Request::reply) and [`reply_error`](Request::reply_error) consume
 /// the request, so it is answered at most once. A request dropped without an
 /// answer replies `ENOSYS`, or `EIO` if it is dropped while its thread panics,
-/// so the client never stays blocked.
+/// so a dropped request still answers its client. (A request leaked with
+/// `std::mem::forget` never runs its `Drop` and leaves its client blocked.)
+/// A request borrows its channel and receive buffer, so it cannot outlive
+/// the channel.
 #[derive(Debug)]
 pub struct Request<'b> {
     rcvid: sys::rcvid_t,

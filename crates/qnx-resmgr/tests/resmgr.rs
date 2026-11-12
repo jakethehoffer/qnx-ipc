@@ -114,6 +114,52 @@ fn chunked_read_returns_full_content_then_eof() {
     drop_with_deadline(running);
 }
 
+/// Empty until `filled` is set, then `"late\n"`; counts `read` calls.
+struct FillsLater {
+    filled: Arc<AtomicBool>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl Device for FillsLater {
+    fn read(&self) -> Result<Vec<u8>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        if self.filled.load(Ordering::SeqCst) {
+            Ok(b"late\n".to_vec())
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
+#[test]
+fn empty_snapshot_stays_at_eof_for_its_open() {
+    let filled = Arc::new(AtomicBool::new(false));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let device = FillsLater {
+        filled: Arc::clone(&filled),
+        reads: Arc::clone(&reads),
+    };
+    let (path, running) = spawn("fills-later", device);
+
+    let mut file = File::open(&path).expect("open");
+    let mut buf = [0u8; 64];
+    assert_eq!(file.read(&mut buf).expect("first read"), 0, "empty device");
+    filled.store(true, Ordering::SeqCst);
+    // Same open: still end of file, and the device was not asked again.
+    assert_eq!(
+        file.read(&mut buf).expect("read after EOF"),
+        0,
+        "a reader that saw EOF must not get data later on the same open"
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "one snapshot per open");
+    drop(file);
+
+    // A new open takes a new snapshot and sees the new content.
+    assert_eq!(std::fs::read(&path).expect("new open"), b"late\n");
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    drop_with_deadline(running);
+}
+
 /// Stores what is written and reads it back.
 #[derive(Default)]
 struct Store {

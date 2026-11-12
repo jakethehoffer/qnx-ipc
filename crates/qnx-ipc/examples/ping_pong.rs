@@ -30,7 +30,7 @@ struct Server;
 impl Handler for Server {
     fn on_message(&mut self, req: Request<'_>) -> qnx_ipc::Result<ControlFlow<()>> {
         // A short or foreign message fails here; the dropped request then
-        // answers the client ENOSYS, so it never stays blocked.
+        // answers the client ENOSYS, so it is not left blocked.
         let ping: Ping = req.decode()?;
         req.reply(&Pong { n: ping.n + 1 })?;
         Ok(ControlFlow::Break(())) // one request, then stop

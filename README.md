@@ -34,9 +34,11 @@ avoid QNX's core strengths, or hand-write `unsafe` FFI against the raw C API,
 where one missed reply leaves a client blocked forever.
 
 `qnx-ipc` gives Rust programs that API safely. Kernel objects are owned and
-released on drop; a request is answered at most once, and a request that is
-dropped or whose handler panics still answers its client; message layouts are
-plain data that C code shares. The safety argument is written out in
+released on drop; a request is answered at most once, cannot outlive its
+channel, and still answers its client when it is dropped or its handler panics
+(the limits are listed under
+[Known limits](docs/architecture.md#known-limits)); message layouts are plain
+data that C code shares. The safety argument is written out in
 [docs/architecture.md](docs/architecture.md), every `unsafe` block included.
 
 ## 30-second example
@@ -122,12 +124,12 @@ vsigd: served infotainment-client at priority 10
 
 == 6. any program can read the signals as files
 # cat /dev/vehicle/speed
-speed_kmh=99.9
+speed_kmh=101.2
 # cat /dev/vehicle/brake
-brake_kpa=781.5
+brake_kpa=666.8
 
 == 7. freeze the infotainment client
-# kill -STOP 54853650
+# kill -STOP 58613778
 
 == 8. its heartbeats stop; the watchdog restarts it
 watchdog: infotainment-client missed 3 heartbeat checks

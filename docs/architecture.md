@@ -2,7 +2,7 @@
 
 This page explains how the three crates fit together, who owns each QNX kernel
 object, why the public API is sound, and how the library makes sure a blocked
-client always gets an answer. Every `unsafe` block in the library crates is
+client gets an answer when a request is dropped or its handler panics. Every `unsafe` block in the library crates is
 listed below with the invariant it relies on. The same invariants are written
 as `// SAFETY:` comments next to the code.
 
@@ -68,15 +68,20 @@ is ignored.
 | `NamedChannel` | `name_attach` (its own channel) | `name_detach` | |
 | `Connection` | `ConnectAttach` (`to_local`, `to_process`) or `name_open` (`open`) | `ConnectDetach` or `name_close`, whichever matches | |
 | `RecvBuf` | a `Vec<u8>`, at least 16 bytes (one pulse) | the buffer | |
-| `Request<'b>` | a receive id (`rcvid`) from `MsgReceive` | if not answered: `MsgError(ENOSYS)`, or `EIO` while panicking | the `RecvBuf` (`'b`) |
+| `Request<'b>` | a receive id (`rcvid`) from `MsgReceive` | if not answered: `MsgError(ENOSYS)`, or `EIO` while panicking | the `RecvBuf` and the `Channel` or `NamedChannel` (`'b`) |
 | `PulseTimer<'c>` | `timer_create` + `timer_settime` (`SIGEV_PULSE`) | `timer_delete` | the `Connection` (`'c`) |
 | `RunningManager` | a dispatch thread and a side-channel connection to it | sets the stop flag, sends the stop pulse, joins the thread, `ConnectDetach` | |
 | `Attached<D>` (private, owned by the dispatch thread) | `dispatch_create`, a boxed `Resources<D>`, `resmgr_attach`, `pulse_attach`, `dispatch_context_alloc` | in reverse: `resmgr_detach(_RESMGR_DETACH_ALL \| _RESMGR_DETACH_CLOSE)`, `pulse_detach`, `dispatch_context_free`, `dispatch_destroy`, then frees the box and the device | |
 
 Two of these borrows exist because of real problems:
 
-- **`Request` borrows `RecvBuf`.** A request's bytes are a slice of the buffer,
-  so the buffer cannot be received into again while a request is alive.
+- **`Request` borrows `RecvBuf` and its channel.** A request's bytes are a
+  slice of the buffer, so the buffer cannot be received into again while a
+  request is alive. `receive` also ties the request to the channel
+  (`receive<'b>(&'b self, buf: &'b mut RecvBuf)`), so a request cannot outlive
+  its channel and answer a receive id that no longer exists, or that the kernel
+  has reused (a `compile_fail` example on `Channel::receive` shows it). This
+  was a deferred review finding, closed in the docs task.
 - **`PulseTimer` borrows `Connection`.** The kernel timer holds only the coid
   number, and QNX reuses coids. A timer that outlived its connection would send
   pulses to whatever channel got that coid next. This was a review finding (see
@@ -181,11 +186,13 @@ Test code (`tests/`) has its own `unsafe` blocks for raw sends and
 `TimerTimeout` deadlines, each with a `SAFETY` comment. The demo programs use
 `unsafe` only for `SchedGet` and `SchedSet`.
 
-## Reply guarantee: a blocked client always gets an answer
+## Reply guarantee: dropped requests and panics still answer the client
 
 A QNX client that sends a message is blocked until the server replies. A server
-bug that forgets to reply leaves the client blocked forever. The library closes
-every path to that, and each rule has a test that runs on QNX:
+bug that forgets to reply leaves the client blocked forever. The library
+answers for the server whenever a request is dropped unanswered or its handler
+panics, and each rule below has a test that runs on QNX. What it cannot cover
+(a leaked request, `panic = "abort"`) is under [Known limits](#known-limits).
 
 | Situation | What the client gets | Test |
 | --- | --- | --- |
@@ -195,7 +202,7 @@ every path to that, and each rule has a test that runs on QNX:
 | Message shorter than its type | the server's `decode` returns `Error::Truncated`, never reads past the data; the client gets the error the server chooses (`ENOSYS` if it just drops the request) | `messages::short_message_is_rejected` |
 | `on_message` panics inside `serve` | `EIO`; the server keeps serving | `serve::panicking_handler_replies_eio` |
 | `on_pulse` panics inside `serve` | (no client waits) the loop keeps serving | `serve::panicking_pulse_handler_keeps_serving` |
-| `MsgReply` or `MsgError` itself fails | `answered` stays false, so `Drop` still sends `MsgError(ENOSYS)` | (by construction) |
+| `MsgReply` or `MsgError` itself fails | `answered` stays false, so `Drop` sends `MsgError(ENOSYS)`. Usually the call failed because the client is gone, and this fallback fails harmlessly too. In the rare case that a failed `MsgReply` was still delivered, the client is already unblocked, its receive id can be reused by another message, and the fallback `ENOSYS` may then answer that other message (see Known limits). | (no test) |
 | QNX system message (kinds up to 0x1FF) on a `NamedChannel` | `_IO_CONNECT` gets `EOK`, others `ENOSYS`; the handler never sees them | `names::system_messages_answered_transparently` |
 | Client process dies | the server gets a `PulseKind::Disconnect` pulse and the server connection is released | `pulses::client_exit_delivers_disconnect` |
 | `Device` method panics | `EIO`; the manager keeps serving (the next open works) | `resmgr::panicking_device_returns_eio` |
@@ -217,10 +224,11 @@ These are honest edges of the current design, not hidden bugs:
 - **A leaked `Request` leaves its client blocked.** Rust allows
   `std::mem::forget`, and a forgotten request never runs its `Drop`. The
   library cannot answer what it is not told about.
-- **A `Request` can outlive its `Channel`.** The request borrows the receive
-  buffer, not the channel. If the channel is destroyed first, the request's
-  `Drop` replies to a receive id that no longer exists (the call fails and is
-  ignored). Tying the request to the channel's lifetime would close this.
+- **A failed but delivered `MsgReply`.** If `MsgReply` returns an error even
+  though the reply reached the client, `Request` falls back to
+  `MsgError(ENOSYS)` on a receive id that may by then belong to another
+  client's message, which would get that `ENOSYS`. This path has not been
+  seen; a failing `MsgReply` normally means the client is gone.
 - **`panic = "abort"`** turns the panic paths above into process aborts; the
   client then sees the server's death instead of `EIO`.
 - **Handler state after a caught panic** may be half-updated; `serve` uses

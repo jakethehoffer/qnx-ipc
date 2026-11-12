@@ -12,10 +12,11 @@ use qnx_ipc_sys as sys;
 pub trait Device: Send + Sync + 'static {
     /// Returns the device's content.
     ///
-    /// Called once per open file, on its first read (and again whenever a read
-    /// starts from offset 0). The result is kept as that open file's snapshot:
-    /// later reads are served from it at the file offset, and a read at or past
-    /// its end returns 0 bytes (end of file). Each open gets its own snapshot.
+    /// Called once per open file, on its first read. The result is kept as that
+    /// open file's snapshot: later reads (also after seeking back to the start)
+    /// are served from it at the file offset, and a read at or past its end
+    /// returns 0 bytes (end of file), also for an empty snapshot. Each open
+    /// gets its own snapshot, so a new open sees new content.
     fn read(&self) -> Result<Vec<u8>>;
 
     /// Handles one `write` with its full payload and returns how many bytes it

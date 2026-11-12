@@ -66,9 +66,22 @@ impl Channel {
     /// this detaches the kernel's server connection to the departed client
     /// (`ConnectDetach(scoid)`) before returning the pulse, which frees it.
     ///
+    /// A received [`Request`] borrows both the channel and `buf`, so it cannot
+    /// outlive the channel it came from: its receive id cannot go stale.
+    ///
+    /// ```compile_fail
+    /// use qnx_ipc::{Channel, ChannelFlags, RecvBuf};
+    ///
+    /// let mut buf = RecvBuf::with_capacity(64);
+    /// let channel = Channel::new(ChannelFlags::empty()).unwrap();
+    /// let received = channel.receive(&mut buf).unwrap();
+    /// drop(channel); // error[E0505]: cannot move out of `channel` because it is borrowed
+    /// drop(received);
+    /// ```
+    ///
     /// This makes no kernel call before the receive itself, so a kernel timeout
     /// armed with `TimerTimeout` just before it applies to the receive.
-    pub fn receive<'b>(&self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
+    pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
         receive_on(self.chid, buf, SystemMessages::Deliver)
     }
 }

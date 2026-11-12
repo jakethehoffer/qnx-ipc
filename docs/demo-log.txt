@@ -22,12 +22,12 @@ vsigd: served infotainment-client at priority 10
 
 == 6. any program can read the signals as files
 # cat /dev/vehicle/speed
-speed_kmh=99.9
+speed_kmh=101.2
 # cat /dev/vehicle/brake
-brake_kpa=781.5
+brake_kpa=666.8
 
 == 7. freeze the infotainment client
-# kill -STOP 54853650
+# kill -STOP 58613778
 
 == 8. its heartbeats stop; the watchdog restarts it
 watchdog: infotainment-client missed 3 heartbeat checks

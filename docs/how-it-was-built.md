@@ -94,6 +94,15 @@ from its log ([`tools/demo-check.sh`](../tools/demo-check.sh)). It writes
   and makes the demo check fail on any served line that is not at the client's
   priority (40 or 10). The log now shows the server thread going up to 40 and
   down to 10.
+- **Docs that promised more than the code kept** (review of the docs task,
+  fixed in the commit after `28322f0`). The first draft of these docs said a
+  client is "never left blocked" while listing a leaked `Request` as a limit;
+  the wording now says exactly which paths answer. The same review found that
+  an empty device re-read its content on every read, so a reader that had seen
+  end of file could later get data. Each open file now takes one snapshot, a
+  new test (`empty_snapshot_stays_at_eof_for_its_open`) failed on the old code
+  and passes on the new, and a received `Request` now borrows its channel so
+  it cannot answer a stale receive id.
 
 ### Caught by the target
 
