@@ -1,0 +1,15 @@
+[package]
+name = "vsigd"
+description = "Vehicle-signals demo: the server (named channel, /dev/vehicle/* files, priority inheritance)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+qnx-ipc-sys = { path = "../../crates/qnx-ipc-sys" }
+qnx-ipc = { path = "../../crates/qnx-ipc" }
+bytemuck = { version = "1", features = ["derive"] }
+qnx-resmgr = { path = "../../crates/qnx-resmgr" }

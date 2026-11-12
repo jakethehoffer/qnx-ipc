@@ -52,6 +52,7 @@ const FUNCTIONS: &[&str] = &[
     "devctl",
     "TimerTimeout",
     "SchedGet",
+    "SchedSet",
 ];
 
 /// Types bound even when no listed function names them directly.
@@ -108,6 +109,9 @@ const VARS: &[&str] = &[
     "STATE_[A-Z_]+",
     "CLOCK_MONOTONIC",
     "CLOCK_REALTIME",
+    // Scheduling policies from `<sched.h>` (the demo clients use `SCHED_FIFO`).
+    "SCHED_FIFO",
+    "SCHED_RR",
 ];
 
 /// Macros that `qcc` predefines for QNX 8.0 and that the QNX headers test, but that

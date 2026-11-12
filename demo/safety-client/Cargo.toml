@@ -1,0 +1,14 @@
+[package]
+name = "safety-client"
+description = "Vehicle-signals demo: a priority-40 client that reads brake pressure and sends heartbeats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+qnx-ipc-sys = { path = "../../crates/qnx-ipc-sys" }
+qnx-ipc = { path = "../../crates/qnx-ipc" }
+bytemuck = { version = "1", features = ["derive"] }
