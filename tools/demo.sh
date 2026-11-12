@@ -30,8 +30,10 @@ done
 
 remote_dir=/tmp/vehicle-demo
 log="$remote_dir/demo.log"
+# The timeouts make a hung target fail the demo instead of hanging it.
 ssh_opts=(-i "$QNX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no
-          -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+          -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+          -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
 target() { ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "$@"; }
 
 # Stops every demo program (the watchdog first, so it cannot restart a client)
@@ -58,8 +60,11 @@ if [ "$mode" = stop ]; then
 fi
 
 pause() { [ "$pause_s" = 0 ] || sleep "$pause_s"; }
+# Prints a step header, with a blank line before every step but the first.
+first_step=1
 step() {
-  echo
+  [ "$first_step" = 1 ] || echo
+  first_step=0
   echo "== $1"
 }
 
@@ -99,7 +104,7 @@ finish() {
 trap finish EXIT
 
 # --- 1. build --------------------------------------------------------------
-step "1. build: three Rust programs (qnx-ipc, qnx-resmgr) and one C client"
+step "1. build: vsigd, watchdog, safety-client (Rust, using qnx-ipc and qnx-resmgr) and infotainment_client (C)"
 build_log="$(mktemp)"
 if ! { cargo build -j 6 --release --target "$QNX_RUST_TARGET" \
          -p vsigd -p safety-client -p watchdog &&
@@ -112,7 +117,7 @@ if ! { cargo build -j 6 --release --target "$QNX_RUST_TARGET" \
 fi
 rm -f "$build_log"
 bin="$CARGO_TARGET_DIR/$QNX_RUST_TARGET/release"
-echo "built vsigd, watchdog, safety-client (Rust) and infotainment_client (C)"
+echo "built all four programs"
 
 # --- 2. deploy -------------------------------------------------------------
 step "2. deploy to the QNX 8.0 target: $remote_dir"
@@ -176,7 +181,8 @@ if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 mark="$(fetch_log | wc -l)"
-echo "# kill -STOP $pid"
+# The real pid changes from run to run; the narration names it instead.
+echo "# kill -STOP <infotainment_client pid>"
 target "kill -STOP $pid"
 pause
 
@@ -194,3 +200,7 @@ step "9. stop everything"
 stop_demo
 started=0
 echo "all demo programs stopped, /dev/vehicle is gone"
+# Every request of the run, now that no more can come: each distinct served
+# line in vsigd's whole log. tools/demo-check.sh checks every one of them.
+echo "# every request of this run, as vsigd logged it (distinct lines):"
+fetch_log | awk '/ served / && !seen[$0]++'

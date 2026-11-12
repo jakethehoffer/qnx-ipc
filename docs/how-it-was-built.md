@@ -18,8 +18,9 @@ Jake's approval, then wrote the code, the tests, the scripts and these docs.
 Jake did not type the code.
 
 **A separate AI reviewer**, another Claude agent that did not write the code,
-reviewed each task's diff against the design before the next task started. Its
-findings were fixed in follow-up commits or recorded as minor and deferred.
+reviewed each task's diff against that task's brief and the plan before the
+next task started. Its findings were fixed in follow-up commits or recorded as
+minor and deferred.
 
 ## The workflow
 
@@ -39,10 +40,10 @@ findings were fixed in follow-up commits or recorded as minor and deferred.
    `ChannelFlags::DISCONNECT` made `client_exit_delivers_disconnect` time out;
    the C ping server answering `n + 2` made `rust_client_talks_to_c_server`
    fail.
-3. **Review, then fix, then the next task.** The reviewer read the diff. Three
-   tasks needed a fix round (below). Minor findings were written down rather
-   than fixed on the spot; the ones that matter for users are listed under
-   "Known limits" in [architecture.md](architecture.md).
+3. **Review, then fix, then the next task.** The reviewer read the diff. Four
+   tasks (4, 7, 8 and 9) each needed one fix round (below). Minor findings
+   were written down rather than fixed on the spot; the ones that matter for
+   users are listed under "Known limits" in [architecture.md](architecture.md).
 
 ## The on-target test loop
 
@@ -53,14 +54,24 @@ The agent could not claim that something worked without QNX agreeing.
 over SSH to a QNX 8.0 virtual machine under QEMU
 ([`tools/qemu-up.sh`](../tools/qemu-up.sh)), run it there and return its real
 exit code. Every test in [test-log.txt](test-log.txt) ran on QNX, not on Linux.
-Blocking calls in the tests run under a kernel timeout (`TimerTimeout`), so a
-broken implementation fails a test instead of hanging the run.
+Most blocking waits in the tests are bounded, either by a kernel timeout
+(`TimerTimeout`) or by joining the server thread with a deadline
+(`join_within`), so a broken implementation usually fails a test instead of
+hanging the run. Not every wait is bounded: a `name_attach` channel has
+`_NTO_CHF_UNBLOCK`, so a client waiting there for a reply ignores its timeout,
+and a named-channel server that received a message but never answered it would
+hang its test; the resource-manager tests' `File::read` calls have no timeout
+either.
 
 [`tools/test-all.sh`](../tools/test-all.sh) runs everything in one command:
-format and clippy checks, the docs build with warnings as errors, all tests on
-the target (with the C programs for the interop tests), and the demo checked
-from its log ([`tools/demo-check.sh`](../tools/demo-check.sh)). It writes
-[test-log.txt](test-log.txt) and [demo-log.txt](demo-log.txt).
+format and clippy checks, the docs build with warnings as errors, a check that
+each `compile_fail` example in the docs fails with the error it names
+([`tools/compile-fail.sh`](../tools/compile-fail.sh), on the Linux host, since
+rustdoc cannot run doctests for QNX), all tests on the target (with the C
+programs for the interop tests), and the demo checked from its log
+([`tools/demo-check.sh`](../tools/demo-check.sh)). It writes
+[test-log.txt](test-log.txt) and, when the demo check passes,
+[demo-log.txt](demo-log.txt).
 
 ## Where the agent got it wrong
 
@@ -94,15 +105,16 @@ from its log ([`tools/demo-check.sh`](../tools/demo-check.sh)). It writes
   and makes the demo check fail on any served line that is not at the client's
   priority (40 or 10). The log now shows the server thread going up to 40 and
   down to 10.
-- **Docs that promised more than the code kept** (review of the docs task,
-  fixed in the commit after `28322f0`). The first draft of these docs said a
-  client is "never left blocked" while listing a leaked `Request` as a limit;
-  the wording now says exactly which paths answer. The same review found that
+- **Docs that promised more than the code kept** (`28322f0`, fixed in
+  [`916f9f0`](https://github.com/jakethehoffer/qnx-ipc/commit/916f9f0)). The
+  first draft of these docs said a client is "never left blocked" while
+  listing a leaked `Request` as a limit; the wording now says exactly which
+  paths answer. The same review found that
   an empty device re-read its content on every read, so a reader that had seen
   end of file could later get data. Each open file now takes one snapshot, a
   new test (`empty_snapshot_stays_at_eof_for_its_open`) failed on the old code
-  and passes on the new, and a received `Request` now borrows its channel so
-  it cannot answer a stale receive id.
+  and passes on the new, and a received `Request` now borrows its channel, so
+  destroying the channel cannot leave it answering a stale receive id.
 
 ### Caught by the target
 
@@ -137,7 +149,7 @@ from its log ([`tools/demo-check.sh`](../tools/demo-check.sh)). It writes
 
 ## Setting up QNX
 
-Setup problems, all solved in the first commit
+Setup problems, all solved in the first build commit
 ([`09b59a9`](https://github.com/jakethehoffer/qnx-ipc/commit/09b59a9)) and
 written up in [toolchain.md](toolchain.md):
 

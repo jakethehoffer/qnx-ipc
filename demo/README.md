@@ -33,7 +33,9 @@ along a smooth, repeating curve on a 10 Hz pulse timer. There is no vehicle bus.
 | `demo/watchdog` | Rust | Registers the name `watchdog`, starts both clients, checks their heartbeats every 500 ms, restarts a client after 3 missed checks. |
 
 The protocol is `c/include/vehicle.h`, mirrored in `demo/vsigd/src/proto.rs`.
-Both copies assert the struct sizes, so they cannot drift apart silently.
+Both copies assert the struct sizes as fixed numbers, so a change that alters a
+size fails to build until that side's assertion is changed too; a change that
+keeps the sizes (reordered or retyped fields) is not caught.
 
 | Item | Value |
 | --- | --- |
@@ -64,3 +66,6 @@ left and `/dev/vehicle` is gone. It first stops anything an earlier run left
 behind, so it can be run again at any time. All programs write to
 `/tmp/vehicle-demo/demo.log` on the target; the script prints the interesting
 lines, with the per-request `served` lines reduced to the first one per client.
+At the end, after everything has stopped, it prints each distinct `served` line
+of the whole run; `tools/demo-check.sh` fails if any of them shows a priority
+other than its client's (40 or 10).

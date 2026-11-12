@@ -33,6 +33,7 @@ pub struct Header {
 /// impl qnx_ipc::Message for Bad { const KIND: u16 = 0x100; }
 ///
 /// let conn = qnx_ipc::Connection::to_local(1).unwrap();
+/// // error[E0080]: Message::KIND must be >= 0x200
 /// let _: qnx_ipc::Result<Bad> = conn.send(&Bad { n: 1 });
 /// ```
 pub trait Message: bytemuck::Pod {

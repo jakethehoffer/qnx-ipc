@@ -9,8 +9,10 @@
 tools/lint.sh (cargo fmt --check, clippy -D warnings) ... ok
 cargo doc --no-deps (rustdoc -D warnings) ... ok
 README example = crates/qnx-resmgr/examples/hello_device.rs ... ok
+tools/compile-fail.sh (compile_fail examples fail as documented) ... ok
 tools/build-c.sh ... ok
 tools/demo-check.sh (vehicle-signals demo) ... ok
+README demo excerpt = docs/demo-log.txt from step 3 ... ok
 
 ## Tests on the QNX target (cargo test --workspace, QNX_RUN_WITH_C=1)
 
@@ -24,6 +26,7 @@ test rust_client_talks_to_c_server ... ok
 ### messages (tests/messages.rs)
 test dropped_request_unblocks_client ... ok
 test ping_pong_round_trip ... ok
+test reply_error_rejects_non_positive_errno ... ok
 test request_reports_sender ... ok
 test short_message_is_rejected ... ok
 test unknown_kind_gets_enosys ... ok
@@ -37,7 +40,6 @@ test system_messages_answered_transparently ... ok
 
 ### pulses (tests/pulses.rs)
 test bad_pulse_code_rejected ... ok
-test child_connect_and_exit ... ok
 test client_exit_delivers_disconnect ... ok
 test periodic_timer_delivers_pulses ... ok
 test pulse_kind_maps_kernel_codes ... ok

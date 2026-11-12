@@ -6,15 +6,19 @@
 #      since QNX's Rust package has no clippy)
 #   2. cargo doc --no-deps for the workspace, with rustdoc warnings as errors,
 #      and the README's 30-second example compared with the file it shows
-#   3. tools/build-c.sh, then every test of the workspace on the QNX target
+#   3. tools/compile-fail.sh: each compile_fail example in the docs fails to
+#      compile with the error it names (host target; rustdoc cannot run
+#      doctests for QNX)
+#   4. tools/build-c.sh, then every test of the workspace on the QNX target
 #      (QNX_RUN_WITH_C=1, so the C interop programs are copied along)
-#   4. tools/demo-check.sh: the vehicle-signals demo, checked from its log
+#   5. tools/demo-check.sh: the vehicle-signals demo, checked from its log, and
+#      the README's demo excerpt compared with that log
 #
 #   tools/test-all.sh
 #
 # Writes docs/test-log.txt: the QNX and toolchain versions, then each check and
 # each test with ok or FAILED. No timings. Also writes docs/demo-log.txt, the
-# output of the checked demo run. Exits non-zero if anything failed;
+# output of the demo run, if its check passed. Exits non-zero if anything failed;
 # every step still runs, so the log shows all failures at once.
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -60,6 +64,8 @@ readme_example() {
 }
 check "README example = crates/qnx-resmgr/examples/hello_device.rs" readme_example
 
+check "tools/compile-fail.sh (compile_fail examples fail as documented)" bash tools/compile-fail.sh
+
 check "tools/build-c.sh" bash tools/build-c.sh
 
 # The target tests. Their per-test lines are kept; cargo's "finished in" timing
@@ -77,10 +83,27 @@ fi
 
 check "tools/demo-check.sh (vehicle-signals demo)" bash tools/demo-check.sh "$root/docs/demo-log.txt"
 
+# The README's demo excerpt must be docs/demo-log.txt from step 3 on. The signal
+# values (speed_kmh=101.2) change from run to run, and lines within a step can
+# come in a different order (the programs run concurrently), so both sides are
+# compared with values masked and each step's lines sorted. Anything else that
+# differs, a line added, dropped or changed, fails the check.
+demo_excerpt() {
+  norm() {
+    awk '/^== [0-9]+\./ { s = $2 }
+         NF { gsub(/=[0-9]+\.[0-9]+/, "=<value>"); print s " " $0 }' | LC_ALL=C sort
+  }
+  diff <(awk '/^<!-- begin: docs\/demo-log.txt/ { f = 1; next }
+              /^<!-- end -->/ { f = 0 }
+              f' README.md | sed '1d;$d' | norm) \
+       <(awk '/^== 3\./ { f = 1 } f' docs/demo-log.txt | norm)
+}
+check "README demo excerpt = docs/demo-log.txt from step 3" demo_excerpt
+
 # Versions.
 ssh_opts=(-i "$QNX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
-qnx_os="$(ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 uname -a 2>/dev/null || echo unknown)"
+qnx_os="$(ssh "${ssh_opts[@]}" -o ConnectTimeout=5 -p "$QNX_SSH_PORT" root@127.0.0.1 uname -a 2>/dev/null || echo unknown)"
 rustc_v="$("$RUSTC" -V 2>/dev/null || echo unknown)"
 cargo_v="$(cargo -V 2>/dev/null || echo unknown)"
 gcc_v="$(ntox86_64-gcc --version 2>/dev/null | head -n 1 || echo unknown)"

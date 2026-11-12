@@ -1,6 +1,5 @@
-
-== 1. build: three Rust programs (qnx-ipc, qnx-resmgr) and one C client
-built vsigd, watchdog, safety-client (Rust) and infotainment_client (C)
+== 1. build: vsigd, watchdog, safety-client (Rust, using qnx-ipc and qnx-resmgr) and infotainment_client (C)
+built all four programs
 
 == 2. deploy to the QNX 8.0 target: /tmp/vehicle-demo
 copied vsigd, watchdog, safety-client, infotainment_client
@@ -27,7 +26,7 @@ speed_kmh=101.2
 brake_kpa=666.8
 
 == 7. freeze the infotainment client
-# kill -STOP 58613778
+# kill -STOP <infotainment_client pid>
 
 == 8. its heartbeats stop; the watchdog restarts it
 watchdog: infotainment-client missed 3 heartbeat checks
@@ -38,3 +37,6 @@ vsigd: served infotainment-client at priority 10
 
 == 9. stop everything
 all demo programs stopped, /dev/vehicle is gone
+# every request of this run, as vsigd logged it (distinct lines):
+vsigd: served safety-client at priority 40
+vsigd: served infotainment-client at priority 10

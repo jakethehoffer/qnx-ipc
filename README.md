@@ -103,9 +103,10 @@ A watchdog (Rust) gets a heartbeat pulse from each client and restarts one that
 stops. The signals are simulated; there is no vehicle bus.
 
 Steps 3 to 9 of a checked run of `tools/demo.sh --headless`, copied from
-[docs/demo-log.txt](docs/demo-log.txt) (the signal values and the pid change
-from run to run):
+[docs/demo-log.txt](docs/demo-log.txt) (the signal values change from run to
+run; `tools/test-all.sh` fails if the rest of the two differ):
 
+<!-- begin: docs/demo-log.txt from step 3 (checked by tools/test-all.sh) -->
 ```text
 == 3. start vsigd: named channel "vehicle" plus two /dev files
 vsigd: serving channel "vehicle", /dev/vehicle/speed and /dev/vehicle/brake (own priority 20)
@@ -129,7 +130,7 @@ speed_kmh=101.2
 brake_kpa=666.8
 
 == 7. freeze the infotainment client
-# kill -STOP 58613778
+# kill -STOP <infotainment_client pid>
 
 == 8. its heartbeats stop; the watchdog restarts it
 watchdog: infotainment-client missed 3 heartbeat checks
@@ -140,14 +141,20 @@ vsigd: served infotainment-client at priority 10
 
 == 9. stop everything
 all demo programs stopped, /dev/vehicle is gone
+# every request of this run, as vsigd logged it (distinct lines):
+vsigd: served safety-client at priority 40
+vsigd: served infotainment-client at priority 10
 ```
+<!-- end -->
 
 The priorities in the `served` lines are not copied from the request: `vsigd`
 asks the kernel (`SchedGet`, `sched_curpriority`) what priority its own thread
 runs at while it handles each request. It starts at 20, runs at 40 for the
 safety client and at 10 for the infotainment client, and sets no priority
-itself. `tools/demo-check.sh` fails if any request is served at another
-priority.
+itself. `vsigd` logs a `served` line for every signal request; after everything has
+stopped, the demo prints each distinct one from the whole run, and
+`tools/demo-check.sh` fails if any of them shows a priority other than the
+client's.
 
 ## Quick start
 
@@ -183,8 +190,12 @@ tools/qemu-down.sh        # stop the target
 `cargo run` and `cargo test` for the QNX target copy the binary to the target
 over SSH (`root@127.0.0.1`, port 2222) and run it there. To try the 30-second
 example, run `cargo run -p qnx-resmgr --example hello_device --target $QNX_RUST_TARGET`
-in one terminal and, in another,
-`ssh -i ~/.ssh/qnx_target_ed25519 -p 2222 root@127.0.0.1 cat /dev/hello`.
+in one terminal and, in another (after `source tools/env.sh`),
+`ssh -i "$QNX_SSH_KEY" -p 2222 root@127.0.0.1 cat /dev/hello`. Ctrl-C stops
+`cargo run` but not the program on the target, which keeps serving
+`/dev/hello`; stop it with
+`ssh -i "$QNX_SSH_KEY" -p 2222 root@127.0.0.1 slay hello_device`, which also
+removes `/dev/hello`.
 
 ## Evidence of QNX use
 

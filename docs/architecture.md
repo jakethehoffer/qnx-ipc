@@ -54,7 +54,7 @@ kinds are `>= 0x200`: lower kinds are QNX's (`_IO_BASE`..`_IO_MAX`, 0x100 to
 0x1FF, used for connect and I/O messages). Sending or decoding a `Message` with
 a lower `KIND` is a compile error (a `const` assertion evaluated in `send` and
 `decode`). `Request::reply` passes the reply length as the `MsgReply` status,
-the QNX convention, so a C client treats only `-1` from `MsgSend` as failure.
+the QNX convention, so a C client must treat only `-1` from `MsgSend` as failure.
 
 ## Ownership and `Drop` rules
 
@@ -67,7 +67,7 @@ is ignored.
 | `Channel` | `ChannelCreate` | `ChannelDestroy` | |
 | `NamedChannel` | `name_attach` (its own channel) | `name_detach` | |
 | `Connection` | `ConnectAttach` (`to_local`, `to_process`) or `name_open` (`open`) | `ConnectDetach` or `name_close`, whichever matches | |
-| `RecvBuf` | a `Vec<u8>`, at least 16 bytes (one pulse) | the buffer | |
+| `RecvBuf` | a `Vec<u8>`, at least `size_of::<_pulse>()` bytes (one pulse) | the buffer | |
 | `Request<'b>` | a receive id (`rcvid`) from `MsgReceive` | if not answered: `MsgError(ENOSYS)`, or `EIO` while panicking | the `RecvBuf` and the `Channel` or `NamedChannel` (`'b`) |
 | `PulseTimer<'c>` | `timer_create` + `timer_settime` (`SIGEV_PULSE`) | `timer_delete` | the `Connection` (`'c`) |
 | `RunningManager` | a dispatch thread and a side-channel connection to it | sets the stop flag, sends the stop pulse, joins the thread, `ConnectDetach` | |
@@ -79,9 +79,10 @@ Two of these borrows exist because of real problems:
   slice of the buffer, so the buffer cannot be received into again while a
   request is alive. `receive` also ties the request to the channel
   (`receive<'b>(&'b self, buf: &'b mut RecvBuf)`), so a request cannot outlive
-  its channel and answer a receive id that no longer exists, or that the kernel
-  has reused (a `compile_fail` example on `Channel::receive` shows it). This
-  was a deferred review finding, closed in the docs task.
+  its channel, and destroying the channel cannot leave a request answering a
+  stale receive id (a `compile_fail` example on `Channel::receive` shows it).
+  This was a deferred review finding, closed in the docs task. It does not
+  cover every stale receive id; see [Known limits](#known-limits).
 - **`PulseTimer` borrows `Connection`.** The kernel timer holds only the coid
   number, and QNX reuses coids. A timer that outlived its connection would send
   pulses to whatever channel got that coid next. This was a review finding (see
@@ -191,8 +192,9 @@ Test code (`tests/`) has its own `unsafe` blocks for raw sends and
 A QNX client that sends a message is blocked until the server replies. A server
 bug that forgets to reply leaves the client blocked forever. The library
 answers for the server whenever a request is dropped unanswered or its handler
-panics, and each rule below has a test that runs on QNX. What it cannot cover
-(a leaked request, `panic = "abort"`) is under [Known limits](#known-limits).
+panics; the table names the test that checks each rule on QNX, where there is
+one. What it cannot cover (a leaked request, `panic = "abort"`) is under
+[Known limits](#known-limits).
 
 | Situation | What the client gets | Test |
 | --- | --- | --- |
@@ -204,7 +206,7 @@ panics, and each rule below has a test that runs on QNX. What it cannot cover
 | `on_pulse` panics inside `serve` | (no client waits) the loop keeps serving | `serve::panicking_pulse_handler_keeps_serving` |
 | `MsgReply` or `MsgError` itself fails | `answered` stays false, so `Drop` sends `MsgError(ENOSYS)`. Usually the call failed because the client is gone, and this fallback fails harmlessly too. In the rare case that a failed `MsgReply` was still delivered, the client is already unblocked, its receive id can be reused by another message, and the fallback `ENOSYS` may then answer that other message (see Known limits). | (no test) |
 | QNX system message (kinds up to 0x1FF) on a `NamedChannel` | `_IO_CONNECT` gets `EOK`, others `ENOSYS`; the handler never sees them | `names::system_messages_answered_transparently` |
-| Client process dies | the server gets a `PulseKind::Disconnect` pulse and the server connection is released | `pulses::client_exit_delivers_disconnect` |
+| Client process dies | the server gets a `PulseKind::Disconnect` pulse; the server connection is released (by construction: `receive` calls `ConnectDetach(scoid)`; the test checks only the pulse) | `pulses::client_exit_delivers_disconnect` |
 | `Device` method panics | `EIO`; the manager keeps serving (the next open works) | `resmgr::panicking_device_returns_eio` |
 | `Device` method returns an error | its `errno` (for example `ENOTTY` for an unknown `devctl` command) | `resmgr::devctl_round_trip` |
 | Resource manager stops with files open | those files are closed (their OCBs freed); later reads fail | `resmgr::drop_detaches_path` |
@@ -229,6 +231,12 @@ These are honest edges of the current design, not hidden bugs:
   `MsgError(ENOSYS)` on a receive id that may by then belong to another
   client's message, which would get that `ENOSYS`. This path has not been
   seen; a failing `MsgReply` normally means the client is gone.
+- **A request whose client is gone.** If the client dies, or is unblocked by a
+  signal or timeout on a channel without `ChannelFlags::UNBLOCK`, while the
+  server holds its `Request`, the request's receive id no longer belongs to
+  that client. Answering it normally just fails, but if QNX has reused the id
+  for another message by then, that message gets the answer. The borrow on the
+  channel does not prevent this.
 - **`panic = "abort"`** turns the panic paths above into process aborts; the
   client then sees the server's death instead of `EIO`.
 - **Handler state after a caught panic** may be half-updated; `serve` uses
