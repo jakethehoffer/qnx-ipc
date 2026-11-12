@@ -24,6 +24,21 @@ Ubuntu 24.04. Any Linux x86_64 host with KVM should work the same way.
    `rustup toolchain install 1.85.1 --profile minimal`.
 3. Install QEMU: `sudo apt install qemu-system-x86 qemu-utils` and add yourself to
    the `kvm` group.
+4. Install clang and libclang for bindgen: `sudo apt install clang libclang-dev`
+   (Ubuntu 24.04 gives clang 18.1.3, `/usr/lib/llvm-18/lib/libclang.so`).
+5. For `tools/lint.sh`: `rustup component add rustfmt clippy --toolchain 1.85.1`.
+
+## Generated bindings
+
+`crates/qnx-ipc-sys/build.rs` runs bindgen 0.72 over `crates/qnx-ipc-sys/wrapper.h`
+and writes the result to cargo's `OUT_DIR` (never into the repo). It always reads the
+QNX headers in `$QNX_TARGET/usr/include`, also when cargo builds for the Linux host,
+and fails with a clear message if `QNX_TARGET` is unset. clang is called with
+`--target=x86_64-pc-nto-qnx800` (`aarch64-unknown-nto-qnx800` when building for
+aarch64), `--sysroot=$QNX_TARGET`, and the macros that `qcc` predefines but clang 18
+does not: `__QNX__=800`, `__QNXNTO__`, `__unix__`, `__unix`, `__LITTLEENDIAN__` and,
+on x86_64, `__X86_64__`. Without `__LITTLEENDIAN__` the headers stop with
+`Endian not defined`.
 
 ## Daily use
 
@@ -61,6 +76,8 @@ for the QNX target execute on QNX and return the program's real exit code.
 
 ## Known limits
 
-- QNX's Rust package has no `clippy` or `rustfmt`. `cargo fmt` works from the rustup
-  toolchain. Clippy for the QNX target is covered in `docs/architecture.md` once
-  the crates exist.
+- QNX's Rust package has no `clippy` or `rustfmt`. `tools/lint.sh` runs both from the
+  rustup toolchain with `RUSTC` unset, and runs clippy for the host target
+  `x86_64-unknown-linux-gnu`. That works because the bindings come from the QNX
+  headers whatever the target, so the crates type-check on Linux. Tests run only on
+  the QNX target.
