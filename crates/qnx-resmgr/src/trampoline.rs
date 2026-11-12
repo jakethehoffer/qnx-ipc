@@ -23,8 +23,9 @@
 //!   manager runs a single dispatch thread, so a callback's `&mut DeviceOcb` is
 //!   the only reference to it while the callback runs.
 //!
-//! Lifetime: callbacks run only inside `dispatch_handler` (and `resmgr_detach`,
-//! which closes the open files) on the manager's dispatch thread. The manager
+//! Lifetime: callbacks run only inside `dispatch_handler` (and `resmgr_detach`
+//! with `_RESMGR_DETACH_CLOSE`, which runs the close callbacks of the files
+//! still open) on the manager's dispatch thread. The manager
 //! frees the `Resources` box, and with it the device, only after that thread
 //! has left its loop, detached the path and destroyed the dispatch handle, so
 //! no callback can run on freed memory.
@@ -38,6 +39,7 @@ use core::ffi::{c_int, c_long, c_uint, c_void};
 use core::mem::size_of;
 use core::ptr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use qnx_ipc::Error;
 use qnx_ipc_sys as sys;
@@ -54,6 +56,9 @@ const ENOSYS: c_int = sys::ENOSYS as c_int;
 pub(crate) struct DeviceAttr<D> {
     /// The framework's attribute; must stay the first field.
     pub(crate) attr: sys::iofunc_attr_t,
+    /// The open/free counters, owned (through an `Arc`) by the same `Resources`
+    /// box.
+    pub(crate) stats: *const OpenFileStats,
     /// The device, owned by the same `Resources` box.
     pub(crate) device: *const D,
 }
@@ -66,6 +71,23 @@ pub(crate) struct DeviceOcb {
     ocb: sys::iofunc_ocb_t,
     /// The content returned by `Device::read`, taken on the first read.
     snapshot: Option<Vec<u8>>,
+    /// The path's counters (`DeviceAttr::stats`), bumped when this OCB is freed.
+    stats: *const OpenFileStats,
+}
+
+/// How many open control blocks (one per open file, also per `stat`-style
+/// combine message) a path has allocated and freed.
+///
+/// A test hook, not part of the supported API: after a
+/// [`RunningManager`](crate::RunningManager) drops, `opened == closed` proves no
+/// open file leaked.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct OpenFileStats {
+    /// OCBs allocated (`ocb_calloc`).
+    pub opened: AtomicUsize,
+    /// OCBs freed (`ocb_free`).
+    pub closed: AtomicUsize,
 }
 
 /// Runs a callback body, turning a panic into `EIO` for the client.
@@ -119,15 +141,21 @@ unsafe fn mark_attr(attr: *mut sys::iofunc_attr_t, flags: u32) {
 
 /// `iofunc_funcs_t::ocb_calloc`: allocates a [`DeviceOcb`] for a new open file
 /// (called by `iofunc_open_default`). The framework fills in the OCB fields.
-pub(crate) unsafe extern "C" fn ocb_calloc(
+pub(crate) unsafe extern "C" fn ocb_calloc<D: Device>(
     _ctp: *mut sys::resmgr_context_t,
-    _attr: *mut sys::iofunc_attr_t,
+    attr: *mut sys::iofunc_attr_t,
 ) -> *mut sys::iofunc_ocb_t {
     catch_unwind(|| {
+        // SAFETY: `attr` is the handle of our path, a live `DeviceAttr<D>` (see
+        // the module docs); `stats` points into the same `Resources` box.
+        let stats = unsafe { (*attr.cast::<DeviceAttr<D>>()).stats };
         let ocb = Box::new(DeviceOcb {
             ocb: sys::iofunc_ocb_t::default(),
             snapshot: None,
+            stats,
         });
+        // SAFETY: as above; the counters outlive every OCB.
+        unsafe { (*stats).opened.fetch_add(1, Ordering::SeqCst) };
         Box::into_raw(ocb).cast::<sys::iofunc_ocb_t>()
     })
     // A null OCB makes the open fail (ENOMEM); nothing panics here in practice.
@@ -135,7 +163,8 @@ pub(crate) unsafe extern "C" fn ocb_calloc(
 }
 
 /// `iofunc_funcs_t::ocb_free`: frees an OCB from [`ocb_calloc`] (called by
-/// `iofunc_close_ocb_default` and by `resmgr_detach` for files still open).
+/// `iofunc_close_ocb_default`, on a client's close and, for files still open
+/// when the manager stops, from `resmgr_detach` with `_RESMGR_DETACH_CLOSE`).
 pub(crate) unsafe extern "C" fn ocb_free(ocb: *mut sys::iofunc_ocb_t) {
     if ocb.is_null() {
         return;
@@ -143,6 +172,8 @@ pub(crate) unsafe extern "C" fn ocb_free(ocb: *mut sys::iofunc_ocb_t) {
     // SAFETY: every OCB of our paths comes from `ocb_calloc` (`Box::into_raw` of
     // a `DeviceOcb`), and the framework frees each exactly once.
     let ocb = unsafe { Box::from_raw(ocb.cast::<DeviceOcb>()) };
+    // SAFETY: the counters live in the `Resources` box, which outlives every OCB.
+    unsafe { (*ocb.stats).closed.fetch_add(1, Ordering::SeqCst) };
     // Dropping a `Vec<u8>` does not panic; the guard is for the rule.
     let _ = catch_unwind(AssertUnwindSafe(move || drop(ocb)));
 }

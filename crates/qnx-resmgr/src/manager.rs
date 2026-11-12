@@ -11,7 +11,7 @@ use std::thread::{self, JoinHandle};
 use qnx_ipc::{Error, Result};
 use qnx_ipc_sys as sys;
 
-use crate::trampoline::{self, DeviceAttr};
+use crate::trampoline::{self, DeviceAttr, OpenFileStats};
 use crate::Device;
 
 const EINTR: c_int = sys::EINTR as c_int;
@@ -82,12 +82,15 @@ impl ResourceManager {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let code = attached.stop_code;
+        // SAFETY: `res` is the live box; the loop thread has not started yet.
+        let stats = unsafe { Arc::clone(&(*attached.res).stats) };
         let thread_stop = Arc::clone(&stop);
         let spawned = thread::Builder::new()
             .name("qnx-resmgr".into())
             .spawn(move || attached.serve(Some(&thread_stop)));
         match spawned {
             Ok(thread) => Ok(RunningManager {
+                stats,
                 stop,
                 coid,
                 code,
@@ -105,15 +108,24 @@ impl ResourceManager {
 /// A resource manager serving on its own thread (from
 /// [`ResourceManager::spawn`]).
 ///
-/// Dropping it stops the dispatch loop, detaches the path (files still open
-/// on it are closed and fail with `EBADF` from then on), joins the thread and
-/// drops the device.
+/// Dropping it stops the dispatch loop, detaches the path, closes the files
+/// still open on it (their close callbacks run and free their state; the
+/// clients get `EBADF` from then on), joins the thread and drops the device.
 #[derive(Debug)]
 pub struct RunningManager {
+    stats: Arc<OpenFileStats>,
     stop: Arc<AtomicBool>,
     coid: c_int,
     code: c_int,
     thread: Option<JoinHandle<Result<()>>>,
+}
+
+impl RunningManager {
+    /// The path's OCB counters. A test hook, not part of the supported API.
+    #[doc(hidden)]
+    pub fn open_file_stats(&self) -> Arc<OpenFileStats> {
+        Arc::clone(&self.stats)
+    }
 }
 
 impl Drop for RunningManager {
@@ -148,6 +160,7 @@ struct Resources<D> {
     ocb_funcs: sys::iofunc_funcs_t,
     connect: sys::resmgr_connect_funcs_t,
     io: sys::resmgr_io_funcs_t,
+    stats: Arc<OpenFileStats>,
     device: D,
 }
 
@@ -180,8 +193,10 @@ impl<D: Device> Attached<D> {
         let res = Box::into_raw(Box::new(Resources {
             attr: DeviceAttr {
                 attr: sys::iofunc_attr_t::default(),
+                stats: ptr::null(),
                 device: ptr::null(),
             },
+            stats: Arc::new(OpenFileStats::default()),
             mount: sys::iofunc_mount_t::default(),
             ocb_funcs: sys::iofunc_funcs_t::default(),
             connect: sys::resmgr_connect_funcs_t::default(),
@@ -214,7 +229,7 @@ impl<D: Device> Attached<D> {
             // Our OCB allocator, reached through the mount structure ("Extending
             // the OCB and attribute structures" in the resource manager guide).
             (*res).ocb_funcs.nfuncs = sys::_IOFUNC_NFUNCS;
-            (*res).ocb_funcs.ocb_calloc = Some(trampoline::ocb_calloc);
+            (*res).ocb_funcs.ocb_calloc = Some(trampoline::ocb_calloc::<D>);
             (*res).ocb_funcs.ocb_free = Some(trampoline::ocb_free);
             if sys::iofunc_mount_init(
                 ptr::addr_of_mut!((*res).mount),
@@ -232,6 +247,7 @@ impl<D: Device> Attached<D> {
                 ptr::null_mut(),
             );
             (*res).attr.attr.mount = ptr::addr_of_mut!((*res).mount);
+            (*res).attr.stats = Arc::as_ptr(&(*res).stats);
             (*res).attr.device = ptr::addr_of!((*res).device);
 
             attached.id = sys::resmgr_attach(
@@ -302,11 +318,17 @@ impl<D: Device> Drop for Attached<D> {
     fn drop(&mut self) {
         // SAFETY: each resource is released once, in reverse order of creation,
         // on the thread that ran the loop, so no callback is running. Detaching
-        // with `_RESMGR_DETACH_ALL` closes the files still open (freeing their
-        // OCBs through `ocb_free`) while the attribute and device still exist.
+        // with `_RESMGR_DETACH_ALL` invalidates the files still open, and
+        // `_RESMGR_DETACH_CLOSE` runs their close callbacks (freeing their OCBs
+        // through `ocb_free`); both happen here, before the box with the
+        // attribute, counters and device is freed below.
         unsafe {
             if self.id != -1 {
-                sys::resmgr_detach(self.dpp, self.id, sys::_RESMGR_DETACH_ALL);
+                sys::resmgr_detach(
+                    self.dpp,
+                    self.id,
+                    sys::_RESMGR_DETACH_ALL | sys::_RESMGR_DETACH_CLOSE,
+                );
             }
             if self.stop_code != -1 {
                 sys::pulse_detach(self.dpp, self.stop_code, 0);

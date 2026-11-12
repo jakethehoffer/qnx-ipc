@@ -26,3 +26,5 @@ mod trampoline;
 
 pub use device::Device;
 pub use manager::{ResourceManager, RunningManager};
+#[doc(hidden)]
+pub use trampoline::OpenFileStats;

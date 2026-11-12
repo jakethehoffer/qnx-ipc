@@ -217,15 +217,33 @@ fn devctl_round_trip() {
 #[test]
 fn drop_detaches_path() {
     let (path, running) = spawn("detach", Fixed(b"x"));
+    let stats = running.open_file_stats();
     std::fs::metadata(&path).expect("path exists while the manager runs");
-    // A file still open when the manager stops must not keep it alive.
+    // One file opened, read (so it holds a snapshot) and closed...
+    assert_eq!(std::fs::read(&path).expect("read"), b"x");
+    // ...and one still open, with a snapshot, when the manager stops.
     let mut open = File::open(&path).expect("open");
+    let mut buf = [0u8; 8];
+    assert_eq!(open.read(&mut buf).expect("read"), 1);
+    let opened = stats.opened.load(Ordering::SeqCst);
+    assert!(opened >= 2, "expected at least 2 OCBs, got {opened}");
+    assert_eq!(
+        stats.closed.load(Ordering::SeqCst),
+        opened - 1,
+        "only the still-open file should hold an OCB before the drop"
+    );
+
     drop_with_deadline(running);
     assert!(
         std::fs::metadata(&path).is_err(),
         "path still exists after the RunningManager was dropped"
     );
-    let mut buf = [0u8; 8];
+    // Every OCB, including the one of the file still open, was freed.
+    assert_eq!(
+        stats.closed.load(Ordering::SeqCst),
+        stats.opened.load(Ordering::SeqCst),
+        "an open file's OCB leaked when the manager stopped"
+    );
     assert!(
         open.read(&mut buf).is_err(),
         "a file opened before the drop still reads"
