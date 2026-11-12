@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Cargo runner for the QNX target: copies a binary to the QEMU target and runs it
+# there as root, streaming its output and exiting with its exit code.
+#
+#   tools/qnx-run <binary> [args...]
+#
+# QNX_RUN_ENV="VAR1 VAR2"  pass these host environment variables to the program.
+# QNX_RUN_WITH_C=1         also copy the C programs built by tools/build-c.sh.
+set -euo pipefail
+bin="$1"
+shift
+
+ssh_opts=(-i "$QNX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+remote_dir=/tmp/qnx-run
+
+ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "mkdir -p $remote_dir"
+
+files=("$bin")
+if [ "${QNX_RUN_WITH_C:-0}" = 1 ] && compgen -G "$CARGO_TARGET_DIR/c/*" >/dev/null; then
+  files+=("$CARGO_TARGET_DIR"/c/*)
+fi
+scp -q -O "${ssh_opts[@]}" -P "$QNX_SSH_PORT" "${files[@]}" "root@127.0.0.1:$remote_dir/"
+
+quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+remote="cd $remote_dir && env"
+for var in ${QNX_RUN_ENV:-}; do
+  remote+=" $var=$(quote "${!var:-}")"
+done
+remote+=" ./$(basename "$bin")"
+for arg in "$@"; do
+  remote+=" $(quote "$arg")"
+done
+
+exec ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "$remote"

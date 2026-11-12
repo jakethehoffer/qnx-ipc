@@ -1,0 +1,9 @@
+[package]
+name = "qnx-ipc"
+description = "Safe Rust for QNX 8.0 native message passing, pulses and named channels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false

@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/qnx-ipc"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/jakethehoffer/qnx-ipc"
+rust-version = "1.85"
