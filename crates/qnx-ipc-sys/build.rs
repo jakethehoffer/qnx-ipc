@@ -44,6 +44,7 @@ const FUNCTIONS: &[&str] = &[
     "iofunc_write_verify",
     "iofunc_devctl_default",
     "resmgr_msgreply",
+    "TimerTimeout",
 ];
 
 /// Types bound even when no listed function names them directly.
@@ -79,7 +80,13 @@ const VARS: &[&str] = &[
     "_NTO_SIDE_CHANNEL",
     "SIGEV_PULSE",
     "_RESMGR_NOREPLY",
-    "EOK",
+    // errno values (`EOK`, `ENOSYS`, `EINVAL`, ...) from `<errno.h>`.
+    "E[A-Z0-9]+",
+    // Thread states from `<sys/states.h>`: `TimerTimeout` flags are `1 << STATE_*`
+    // (the `_NTO_TIMEOUT_*` macros are function-like, so bindgen skips them).
+    "STATE_[A-Z_]+",
+    "CLOCK_MONOTONIC",
+    "CLOCK_REALTIME",
 ];
 
 /// Macros that `qcc` predefines for QNX 8.0 and that the QNX headers test, but that

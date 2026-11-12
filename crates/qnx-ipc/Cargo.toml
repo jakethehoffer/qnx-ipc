@@ -10,3 +10,5 @@ publish = false
 
 [dependencies]
 qnx-ipc-sys = { path = "../qnx-ipc-sys" }
+bitflags = "2"
+bytemuck = { version = "1", features = ["derive"] }
