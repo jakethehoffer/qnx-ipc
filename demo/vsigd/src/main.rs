@@ -9,8 +9,10 @@
 //! the priority this server thread is running at while it handles the request,
 //! read from the kernel with `SchedGet`. The channel does not have
 //! `_NTO_CHF_FIXED_PRIORITY`, so QNX runs the receiving thread at the sending
-//! client's priority: the log shows 40 for the safety client and 10 for the
-//! infotainment client.
+//! client's priority. `tools/demo.sh` starts vsigd at priority 20 (`on -p 20`),
+//! which vsigd measures and logs at startup as `own priority`; the log then
+//! shows the thread at 40 for the safety client and 10 for the infotainment
+//! client. vsigd sets no priority itself.
 
 mod proto;
 
@@ -189,8 +191,11 @@ fn run() -> qnx_ipc::Result<()> {
     let self_conn = Connection::to_local(channel.id())?;
     let _timer = PulseTimer::periodic(&self_conn, PulseCode::user(TICK_CODE)?, TICK_PERIOD)?;
 
+    // Measured before the first receive, so no client has lent it a priority.
+    let own_priority = current_priority()?;
     println!(
-        "vsigd: serving channel \"{VEHICLE_NAME}\", /dev/vehicle/speed and /dev/vehicle/brake"
+        "vsigd: serving channel \"{VEHICLE_NAME}\", /dev/vehicle/speed and /dev/vehicle/brake \
+         (own priority {own_priority})"
     );
     let mut server = Server {
         signals,

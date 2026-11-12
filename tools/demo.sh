@@ -132,10 +132,14 @@ pause
 
 # --- 3. vsigd --------------------------------------------------------------
 step "3. start vsigd: named channel \"vehicle\" plus two /dev files"
+# vsigd runs at priority 20, apart from both clients' priorities (40 and 10),
+# so the log can show its thread moving to each client's priority and back.
 # The subshell detaches the program, so ssh returns at once.
-target "cd $remote_dir && : > demo.log && (./vsigd >>demo.log 2>&1 </dev/null &)"
+target "cd $remote_dir && : > demo.log && (on -p 20 ./vsigd >>demo.log 2>&1 </dev/null &)"
 wait_for '^vsigd: serving'
 new_lines 0
+# vsigd's own priority as it measured and logged it.
+vsigd_priority="$(fetch_log | sed -n 's/^vsigd: serving .*(own priority \([0-9]*\))$/\1/p' | head -n 1)"
 pause
 
 # --- 4. watchdog and clients -----------------------------------------------
@@ -151,7 +155,7 @@ new_lines "$mark" | grep -v ' served '
 pause
 
 # --- 5. priority inheritance -----------------------------------------------
-step "5. priority inheritance: vsigd's thread runs at each client's priority"
+step "5. priority inheritance: vsigd (own priority ${vsigd_priority:-unknown}) runs each request at its client's priority"
 new_lines "$mark" | grep ' served '
 pause
 

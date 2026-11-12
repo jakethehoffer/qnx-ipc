@@ -34,9 +34,19 @@ expect() {
   fi
 }
 
+expect '^vsigd: serving .*\(own priority 20\)$' 'vsigd: serving ... (own priority 20)'
 expect 'served safety-client at priority 40$' 'served safety-client at priority 40'
 expect 'served infotainment-client at priority 10$' 'served infotainment-client at priority 10'
 expect 'restarting infotainment-client$' 'restarting infotainment-client'
 expect '^speed_kmh=[0-9]+\.[0-9]$' 'cat /dev/vehicle/speed output (speed_kmh=<n>.<d>)'
+
+# Every request must have run at its client's priority (40 or 10), never at
+# vsigd's own 20 or anything else.
+other="$(grep -E ' served .* at priority ' "$log" | grep -Ev ' served (safety-client at priority 40|infotainment-client at priority 10)$' || true)"
+if [ -n "$other" ]; then
+  cat "$log"
+  echo "demo check failed: unexpected priority line: $(echo "$other" | head -n 1)" >&2
+  exit 1
+fi
 
 echo "demo check passed"

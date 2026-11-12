@@ -3,12 +3,15 @@
 A small vehicle-signals system on QNX 8.0, built with `qnx-ipc` and `qnx-resmgr`.
 It shows three things a QNX engineer cares about, in safe Rust talking to plain C:
 
-1. **Priority inheritance.** `vsigd` is a single-threaded server. A safety client
-   at priority 40 and an infotainment client at priority 10 both send it
-   requests. For each request `vsigd` asks the kernel (`SchedGet`,
-   `sched_curpriority`) what priority its own thread is running at, and logs it:
-   40 while it serves the safety client, 10 while it serves the infotainment
-   client. Nothing in `vsigd` sets a priority; QNX message passing does it.
+1. **Priority inheritance.** `vsigd` answers all client messages on one thread.
+   `tools/demo.sh` starts it at priority 20 (`on -p 20`), and it logs that
+   priority, measured, at startup (`own priority 20`). A safety client at
+   priority 40 and an infotainment client at priority 10 both send it requests.
+   For each request `vsigd` asks the kernel (`SchedGet`, `sched_curpriority`)
+   what priority its own thread is running at, and logs it: 40 while it serves
+   the safety client (up from 20), 10 while it serves the infotainment client
+   (down from 20). Nothing in `vsigd` sets a priority; QNX message passing
+   does it.
 2. **Signals as files.** The same values are served as text files at
    `/dev/vehicle/speed` and `/dev/vehicle/brake`, so `cat` and any other POSIX
    program can read them.
