@@ -4,6 +4,7 @@
 use std::ops::ControlFlow;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
+use crate::channel::{receive_on, SystemMessages};
 use crate::pulse::Pulse;
 use crate::request::Request;
 use crate::{Channel, Error, Received, RecvBuf, Result};
@@ -38,25 +39,32 @@ impl Channel {
     /// the panic hook. Handler errors are ignored. The loop returns `Err` only
     /// when receiving fails (an interrupted receive, `EINTR`, is retried).
     pub fn serve<H: Handler>(&self, buf: &mut RecvBuf, handler: &mut H) -> Result<()> {
-        loop {
-            let received = match self.receive(buf) {
-                Ok(received) => received,
-                Err(Error::Os(errno)) if errno == qnx_ipc_sys::EINTR as i32 => continue,
-                Err(e) => return Err(e),
-            };
-            // An unwinding `on_message` drops its `Request` during the unwind,
-            // which answers the client `EIO` (see `Request`'s `Drop`), exactly once.
-            let outcome = match received {
-                Received::Message(req) => {
-                    catch_unwind(AssertUnwindSafe(|| handler.on_message(req)))
-                }
-                Received::Pulse(pulse) => {
-                    catch_unwind(AssertUnwindSafe(|| handler.on_pulse(pulse)))
-                }
-            };
-            if let Ok(Ok(ControlFlow::Break(()))) = outcome {
-                return Ok(());
-            }
+        serve_on(self.id(), SystemMessages::Deliver, buf, handler)
+    }
+}
+
+/// The serve loop on channel `chid`; the shared body of [`Channel::serve`] and
+/// [`NamedChannel::serve`](crate::NamedChannel::serve).
+pub(crate) fn serve_on<H: Handler>(
+    chid: i32,
+    system: SystemMessages,
+    buf: &mut RecvBuf,
+    handler: &mut H,
+) -> Result<()> {
+    loop {
+        let received = match receive_on(chid, buf, system) {
+            Ok(received) => received,
+            Err(Error::Os(errno)) if errno == qnx_ipc_sys::EINTR as i32 => continue,
+            Err(e) => return Err(e),
+        };
+        // An unwinding `on_message` drops its `Request` during the unwind,
+        // which answers the client `EIO` (see `Request`'s `Drop`), exactly once.
+        let outcome = match received {
+            Received::Message(req) => catch_unwind(AssertUnwindSafe(|| handler.on_message(req))),
+            Received::Pulse(pulse) => catch_unwind(AssertUnwindSafe(|| handler.on_pulse(pulse))),
+        };
+        if let Ok(Ok(ControlFlow::Break(()))) = outcome {
+            return Ok(());
         }
     }
 }

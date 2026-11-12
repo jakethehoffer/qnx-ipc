@@ -1,6 +1,6 @@
 //! Server side: one received message, answered at most once.
 
-use core::ffi::c_int;
+use core::ffi::{c_int, c_long};
 use core::mem::size_of;
 
 use qnx_ipc_sys as sys;
@@ -100,7 +100,35 @@ impl<'b> Request<'b> {
         self.data
     }
 
+    /// Copies the message's bytes from `offset` (counted from the start of the
+    /// message, header included) into `out` with `MsgRead`, and returns how many
+    /// were copied: `min(out.len(), srcmsglen - offset)`, so 0 at or past the
+    /// end. Use it when [`SenderInfo::srcmsglen`] is larger than the receive
+    /// buffer.
+    pub fn read_into(&self, offset: usize, out: &mut [u8]) -> Result<usize> {
+        // SAFETY: `out` is live and exclusively borrowed for the call; the kernel
+        // writes at most `out.len()` bytes into it. `rcvid` is a received message
+        // that is not answered yet (answering consumes `self`), so its sender is
+        // still blocked and its message readable.
+        let n = unsafe {
+            sys::MsgRead(
+                self.rcvid,
+                out.as_mut_ptr().cast(),
+                out.len() as sys::_Sizet,
+                offset as sys::_Sizet,
+            )
+        };
+        if n < 0 {
+            return Err(Error::last_os());
+        }
+        Ok(n as usize)
+    }
+
     /// Replies with `reply` and unblocks the sender, whose `send` returns it.
+    ///
+    /// The reply status (what the client's `MsgSend` returns) is the reply's
+    /// length in bytes, so [`Connection::send_bytes`](crate::Connection::send_bytes)
+    /// can report it.
     ///
     /// If the reply fails, the request is dropped and so answers `ENOSYS`.
     pub fn reply<R: bytemuck::Pod>(mut self, reply: &R) -> Result<()> {
@@ -109,7 +137,7 @@ impl<'b> Request<'b> {
         let rc = unsafe {
             sys::MsgReply(
                 self.rcvid,
-                0,
+                size_of::<R>() as c_long,
                 (reply as *const R).cast(),
                 size_of::<R>() as sys::_Sizet,
             )
