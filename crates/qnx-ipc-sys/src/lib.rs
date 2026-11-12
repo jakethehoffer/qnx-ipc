@@ -72,3 +72,86 @@ pub const fn _RESMGR_NPARTS(num: c_int) -> c_int {
 pub const fn _RESMGR_ERRNO(err: c_int) -> c_int {
     err
 }
+
+/// Points `iov` at `len` bytes starting at `base`.
+///
+/// Hand-written form of the C macro `SETIOV(iov, addr, len)` from `<sys/neutrino.h>`,
+/// which bindgen cannot translate. See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/s/setiov.html>.
+#[inline]
+pub fn SETIOV(iov: &mut iov_t, base: *const c_void, len: usize) {
+    iov.__bindgen_anon_1.iov_base_const = base;
+    iov.iov_len = len as _Sizet;
+}
+
+/// Sets the status that the resource-manager framework replies with (for a read or
+/// write, the byte count).
+///
+/// Hand-written form of the C macro `_RESMGR_STATUS(ctp, status)` from
+/// `<sys/resmgr.h>`. See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/r/resmgr_context_t.html>.
+#[inline]
+pub fn _RESMGR_STATUS(ctp: &mut resmgr_context_t, status: core::ffi::c_long) {
+    ctp.status = status;
+}
+
+/// Points the first part of `ctp->iov` at `len` bytes from `ptr` and returns the
+/// handler value that replies with that one part (`_RESMGR_NPARTS(1)`).
+///
+/// Hand-written form of the C macro `_RESMGR_PTR(ctp, ptr, len)` from
+/// `<sys/resmgr.h>`. See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/r/resmgr_io_funcs_t.html>.
+#[inline]
+pub fn _RESMGR_PTR(ctp: &mut resmgr_context_t, ptr: *const c_void, len: usize) -> c_int {
+    SETIOV(&mut ctp.iov[0], ptr, len);
+    _RESMGR_NPARTS(1)
+}
+
+/// Sets the byte count a read handler replies with.
+///
+/// Hand-written form of `_IO_SET_READ_NBYTES(ctp, nbytes)` from `<sys/iomsg.h>`
+/// (`_RESMGR_STATUS`). See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/i/io_read.html>.
+#[inline]
+pub fn _IO_SET_READ_NBYTES(ctp: &mut resmgr_context_t, nbytes: core::ffi::c_long) {
+    _RESMGR_STATUS(ctp, nbytes);
+}
+
+/// Sets the byte count a write handler replies with.
+///
+/// Hand-written form of `_IO_SET_WRITE_NBYTES(ctp, nbytes)` from `<sys/iomsg.h>`
+/// (`_RESMGR_STATUS`). See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/i/io_write.html>.
+#[inline]
+pub fn _IO_SET_WRITE_NBYTES(ctp: &mut resmgr_context_t, nbytes: core::ffi::c_long) {
+    _RESMGR_STATUS(ctp, nbytes);
+}
+
+/// Number of handlers in `resmgr_connect_funcs_t`, the first argument of
+/// `iofunc_func_init`.
+///
+/// Hand-written form of `_RESMGR_CONNECT_NFUNCS` from `<sys/resmgr.h>`
+/// (`(sizeof(resmgr_connect_funcs_t) - sizeof(unsigned)) / sizeof(void *)`). See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/i/iofunc_func_init.html>.
+pub const _RESMGR_CONNECT_NFUNCS: core::ffi::c_uint =
+    ((core::mem::size_of::<resmgr_connect_funcs_t>() - core::mem::size_of::<core::ffi::c_uint>())
+        / core::mem::size_of::<*const c_void>()) as core::ffi::c_uint;
+
+/// Number of handlers in `resmgr_io_funcs_t`, the third argument of
+/// `iofunc_func_init`.
+///
+/// Hand-written form of `_RESMGR_IO_NFUNCS` from `<sys/resmgr.h>`
+/// (`(sizeof(resmgr_io_funcs_t) - sizeof(unsigned)) / sizeof(void *)`). See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/i/iofunc_func_init.html>.
+pub const _RESMGR_IO_NFUNCS: core::ffi::c_uint =
+    ((core::mem::size_of::<resmgr_io_funcs_t>() - core::mem::size_of::<core::ffi::c_uint>())
+        / core::mem::size_of::<*const c_void>()) as core::ffi::c_uint;
+
+/// Number of functions in `iofunc_funcs_t` (its `nfuncs` field).
+///
+/// Hand-written form of `_IOFUNC_NFUNCS` from `<sys/iofunc.h>`
+/// (`(sizeof(iofunc_funcs_t) - sizeof(unsigned)) / sizeof(void *)`). See
+/// <https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.lib_ref/topic/i/iofunc_mount_t.html>.
+pub const _IOFUNC_NFUNCS: core::ffi::c_uint =
+    ((core::mem::size_of::<iofunc_funcs_t>() - core::mem::size_of::<core::ffi::c_uint>())
+        / core::mem::size_of::<*const c_void>()) as core::ffi::c_uint;

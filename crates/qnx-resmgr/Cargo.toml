@@ -1,0 +1,13 @@
+[package]
+name = "qnx-resmgr"
+description = "QNX 8.0 resource managers in safe Rust: implement a trait, get a /dev path"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+qnx-ipc-sys = { path = "../qnx-ipc-sys" }
+qnx-ipc = { path = "../qnx-ipc" }

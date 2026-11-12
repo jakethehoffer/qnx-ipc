@@ -44,6 +44,12 @@ const FUNCTIONS: &[&str] = &[
     "iofunc_write_verify",
     "iofunc_devctl_default",
     "resmgr_msgreply",
+    "resmgr_msgread",
+    "iofunc_mount_init",
+    "pulse_attach",
+    "pulse_detach",
+    "message_connect",
+    "devctl",
     "TimerTimeout",
     "SchedGet",
 ];
@@ -65,6 +71,14 @@ const TYPES: &[&str] = &[
     "io_write_t",
     "io_devctl_t",
     "io_open_t",
+    "iofunc_ocb_t",
+    "iofunc_mount_t",
+    "iofunc_funcs_t",
+    "dispatch_context_t",
+    // C enum holding `_FTYPE_ANY` and the other file types (from `<sys/ftype.h>`).
+    "_file_type",
+    // C enum holding `_IO_XTYPE_NONE` and `_IO_XTYPE_MASK` (from `<sys/iomsg.h>`).
+    "_io_msg_xtypes",
     // C enums holding `_IO_BASE`, `_IO_MAX` and `_IO_CONNECT` (from `<sys/iomsg.h>`).
     "_msg_bases",
     "_io__Uint16types",
@@ -81,6 +95,12 @@ const VARS: &[&str] = &[
     "_NTO_SIDE_CHANNEL",
     "SIGEV_PULSE",
     "_RESMGR_NOREPLY",
+    "_RESMGR_DETACH_.*",
+    "_RESMGR_FLAG_.*",
+    "MSG_FLAG_.*",
+    "IOFUNC_ATTR_[A-Z_]+",
+    "_POSIX_DEVDIR_.*",
+    "S_IFCHR",
     // errno values (`EOK`, `ENOSYS`, `EINVAL`, ...) from `<errno.h>`.
     "E[A-Z0-9]+",
     // Thread states from `<sys/states.h>`: `TimerTimeout` flags are `1 << STATE_*`
