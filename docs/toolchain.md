@@ -46,6 +46,7 @@ on x86_64, `__X86_64__`. Without `__LITTLEENDIAN__` the headers stop with
 source tools/env.sh      # SDP env, QNX rustc, target triple, runner, paths
 tools/qemu-up.sh         # build the image once, boot it headless, wait for SSH
 cargo run -p qnx-ipc --example hello --target $QNX_RUST_TARGET   # runs on QNX
+tools/test-all.sh        # lint, docs, all tests on QNX, demo check -> docs/test-log.txt
 tools/qemu-down.sh       # stop the target
 ```
 

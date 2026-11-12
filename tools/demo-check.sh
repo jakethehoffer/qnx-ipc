@@ -3,7 +3,8 @@
 # demo is meant to prove. Exits non-zero naming the first missing line, and
 # prints "demo check passed" on success. The demo is stopped either way.
 #
-#   tools/demo-check.sh
+#   tools/demo-check.sh              check only
+#   tools/demo-check.sh <file>       also keep the demo's output in <file>
 set -uo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -20,6 +21,9 @@ trap cleanup EXIT
 
 rc=0
 bash "$root/tools/demo.sh" --headless >"$log" 2>&1 || rc=$?
+if [ -n "${1:-}" ]; then
+  cp "$log" "$1"
+fi
 if [ "$rc" -ne 0 ]; then
   cat "$log"
   echo "demo check failed: tools/demo.sh --headless exited $rc" >&2

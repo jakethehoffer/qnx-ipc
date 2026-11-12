@@ -1,0 +1,70 @@
+# qnx-ipc test log, written by tools/test-all.sh
+#
+# QNX target:  QNX qnx-ipc 8.0.0 2026/06/05-16:26:03EDT x86pc x86_64 (QEMU x86_64)
+# Rust:        rustc 1.85.1-dev (QNX host Rust package), target x86_64-pc-nto-qnx800
+# Cargo:       cargo 1.85.1 (d73d2caf9 2024-12-31)
+# C compiler:  qcc -Vgcc_ntox86_64 (ntox86_64-gcc (QNX8.0.0-rfe1c11236e8a392fdc575fe111bbc8aa4f10d82b-500) 12.2.0)
+
+## Checks
+tools/lint.sh (cargo fmt --check, clippy -D warnings) ... ok
+cargo doc --no-deps (rustdoc -D warnings) ... ok
+README example = crates/qnx-resmgr/examples/hello_device.rs ... ok
+tools/build-c.sh ... ok
+tools/demo-check.sh (vehicle-signals demo) ... ok
+
+## Tests on the QNX target (cargo test --workspace, QNX_RUN_WITH_C=1)
+
+### errors (tests/errors.rs)
+test bad_connection_reports_errno ... ok
+
+### interop (tests/interop.rs)
+test c_client_talks_to_rust_server ... ok
+test rust_client_talks_to_c_server ... ok
+
+### messages (tests/messages.rs)
+test dropped_request_unblocks_client ... ok
+test ping_pong_round_trip ... ok
+test request_reports_sender ... ok
+test short_message_is_rejected ... ok
+test unknown_kind_gets_enosys ... ok
+
+### names (tests/names.rs)
+test duplicate_name_fails ... ok
+test invalid_name_rejected ... ok
+test one_mebibyte_payload_round_trip ... ok
+test open_by_name_round_trip ... ok
+test system_messages_answered_transparently ... ok
+
+### pulses (tests/pulses.rs)
+test bad_pulse_code_rejected ... ok
+test child_connect_and_exit ... ok
+test client_exit_delivers_disconnect ... ok
+test periodic_timer_delivers_pulses ... ok
+test pulse_kind_maps_kernel_codes ... ok
+test user_pulse_arrives ... ok
+test zero_period_timer_rejected ... ok
+
+### serve (tests/serve.rs)
+test panicking_handler_replies_eio ... ok
+test panicking_pulse_handler_keeps_serving ... ok
+test serve_stops_on_break ... ok
+
+### qnx_resmgr (src/lib.rs)
+test manager::tests::rejects_relative_and_nul_paths ... ok
+
+### resmgr (tests/resmgr.rs)
+test cat_reads_device_content ... ok
+test chunked_read_returns_full_content_then_eof ... ok
+test devctl_round_trip ... ok
+test drop_detaches_path ... ok
+test panicking_device_returns_eio ... ok
+test write_then_read_back ... ok
+
+### vsigd (src/main.rs)
+test tests::hello_name_round_trip ... ok
+test tests::one_decimal_rounds_half_up ... ok
+test tests::signals_stay_in_range ... ok
+
+### watchdog (src/main.rs)
+test tests::parses_triples ... ok
+test tests::rejects_bad_arguments ... ok

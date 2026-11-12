@@ -7,6 +7,7 @@
 //!
 //! The items mirror the C API one to one and keep its names. Calling the QNX
 //! functions is `unsafe`. Use the `qnx-ipc` crate for a safe interface.
+#![deny(missing_docs)]
 #![allow(non_snake_case)]
 
 /// The bindgen output, with lints for C naming and generated code turned off.

@@ -1,0 +1,40 @@
+
+== 1. build: three Rust programs (qnx-ipc, qnx-resmgr) and one C client
+built vsigd, watchdog, safety-client (Rust) and infotainment_client (C)
+
+== 2. deploy to the QNX 8.0 target: /tmp/vehicle-demo
+copied vsigd, watchdog, safety-client, infotainment_client
+
+== 3. start vsigd: named channel "vehicle" plus two /dev files
+vsigd: serving channel "vehicle", /dev/vehicle/speed and /dev/vehicle/brake (own priority 20)
+
+== 4. start the watchdog; it starts both clients
+watchdog: started safety-client
+watchdog: started infotainment-client
+vsigd: hello from safety-client
+safety-client: running at priority 40 (SCHED_FIFO), reading brake pressure
+vsigd: hello from infotainment-client
+infotainment-client: running at priority 10 (SCHED_FIFO), reading speed
+
+== 5. priority inheritance: vsigd (own priority 20) runs each request at its client's priority
+vsigd: served safety-client at priority 40
+vsigd: served infotainment-client at priority 10
+
+== 6. any program can read the signals as files
+# cat /dev/vehicle/speed
+speed_kmh=99.9
+# cat /dev/vehicle/brake
+brake_kpa=781.5
+
+== 7. freeze the infotainment client
+# kill -STOP 54853650
+
+== 8. its heartbeats stop; the watchdog restarts it
+watchdog: infotainment-client missed 3 heartbeat checks
+watchdog: restarting infotainment-client
+vsigd: hello from infotainment-client
+infotainment-client: running at priority 10 (SCHED_FIFO), reading speed
+vsigd: served infotainment-client at priority 10
+
+== 9. stop everything
+all demo programs stopped, /dev/vehicle is gone
