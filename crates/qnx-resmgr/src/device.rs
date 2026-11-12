@@ -17,12 +17,17 @@ pub trait Device: Send + Sync + 'static {
     /// are served from it at the file offset, and a read at or past its end
     /// returns 0 bytes (end of file), also for an empty snapshot. Each open
     /// gets its own snapshot, so a new open sees new content.
+    ///
+    /// Only plain reads reach the device. A read with an extended type, such
+    /// as `pread` (`_IO_XTYPE_OFFSET`), gets `ENOSYS`.
     fn read(&self) -> Result<Vec<u8>>;
 
     /// Handles one `write` with its full payload and returns how many bytes it
     /// took (at most `data.len()`; a larger value is reported as `data.len()`).
     ///
-    /// The default rejects writes with `ENOSYS`.
+    /// The default rejects writes with `ENOSYS`. As for reads, a write with an
+    /// extended type, such as `pwrite` (`_IO_XTYPE_OFFSET`), gets `ENOSYS`
+    /// without reaching the device.
     fn write(&self, data: &[u8]) -> Result<usize> {
         let _ = data;
         Err(Error::Os(sys::ENOSYS as i32))
@@ -37,6 +42,10 @@ pub trait Device: Send + Sync + 'static {
     /// `nbytes`; write the output into it and return the number of output bytes
     /// (at most `data.len()`). The client's `devctl` returns `EOK` and its
     /// `dev_info` is 0.
+    ///
+    /// The open mode is not checked: any client that opened the path, also
+    /// read-only (`O_RDONLY`), can send any command, including ones that change
+    /// state. Check what a command may do in the device itself.
     ///
     /// The default rejects every command with `ENOTTY`.
     fn devctl(&self, cmd: u32, data: &mut [u8]) -> Result<usize> {

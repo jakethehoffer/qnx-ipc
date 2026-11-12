@@ -39,7 +39,7 @@ int main(void)
         union recv_buf msg;
         struct _msg_info info;
         memset(&msg, 0, sizeof msg);
-        int rcvid = MsgReceive(attach->chid, &msg, sizeof msg, &info);
+        rcvid_t rcvid = MsgReceive(attach->chid, &msg, sizeof msg, &info);
         if (rcvid == -1) {
             if (errno == EINTR) {
                 continue;

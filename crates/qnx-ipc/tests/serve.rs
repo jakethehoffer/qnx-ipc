@@ -140,8 +140,11 @@ fn panicking_handler_replies_eio() {
     assert_eq!(handler.calls, 2);
 }
 
-/// Panics on every pulse, then stops on the first message.
-struct PanicsOnPulse;
+/// Counts each pulse and then panics; stops on the first message.
+struct PanicsOnPulse {
+    /// Incremented before the panic, so it survives the caught unwind.
+    pulses: u32,
+}
 
 impl Handler for PanicsOnPulse {
     fn on_message(&mut self, req: Request<'_>) -> qnx_ipc::Result<ControlFlow<()>> {
@@ -150,17 +153,21 @@ impl Handler for PanicsOnPulse {
     }
 
     fn on_pulse(&mut self, _pulse: qnx_ipc::Pulse) -> qnx_ipc::Result<ControlFlow<()>> {
+        self.pulses += 1;
         panic!("pulse handler failure on purpose");
     }
 }
 
 #[test]
 fn panicking_pulse_handler_keeps_serving() {
-    let (server, conn) = spawn_server(PanicsOnPulse);
+    let (server, conn) = spawn_server(PanicsOnPulse { pulses: 0 });
     conn.send_pulse(qnx_ipc::PulseCode::user(1).expect("code"), 0)
         .expect("send_pulse");
     let pong: Pong = with_deadline(|| conn.send(&Ping { n: 1 })).expect("send");
     assert_eq!(pong, Pong { n: 0 });
-    let (r, _) = join_within(server);
+    let (r, handler) = join_within(server);
     assert_eq!(r, Ok(()));
+    // The pulse was queued before the message, so `on_pulse` ran (and panicked)
+    // exactly once before the message stopped the loop.
+    assert_eq!(handler.pulses, 1);
 }

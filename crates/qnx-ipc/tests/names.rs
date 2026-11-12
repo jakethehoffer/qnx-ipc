@@ -1,7 +1,10 @@
 //! Named channels (`name_attach` / `name_open`) and messages larger than the
-//! server's receive buffer. Blocking client calls run under `with_deadline` and
-//! server threads are joined with `join_within`, so a broken implementation fails
-//! the test instead of hanging it.
+//! server's receive buffer. Client sends run under `with_deadline` and server
+//! threads are joined with `join_within`, so a server that never receives or
+//! never stops fails the test instead of hanging it. Not every wait is bounded:
+//! a `name_attach` channel has `_NTO_CHF_UNBLOCK`, so a client blocked waiting
+//! for the reply ignores its `TimerTimeout`, and a server that received a
+//! message but never answered it would hang the test.
 
 use std::mem::size_of;
 use std::ops::ControlFlow;

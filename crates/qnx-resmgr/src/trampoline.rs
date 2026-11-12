@@ -257,7 +257,7 @@ unsafe fn read<D: Device>(
     docb.ocb.offset += count as sys::off_t;
     if count > 0 {
         // SAFETY: the OCB's live attribute.
-        unsafe { mark_attr(attr, sys::IOFUNC_ATTR_ATIME) };
+        unsafe { mark_attr(attr, sys::IOFUNC_ATTR_ATIME | sys::IOFUNC_ATTR_DIRTY_TIME) };
     }
     // SAFETY: `ctp` is the live context of this message.
     unsafe { sys::_IO_SET_READ_NBYTES(&mut *ctp, count as c_long) };
@@ -355,7 +355,12 @@ unsafe fn write<D: Device>(
     };
     if taken > 0 {
         // SAFETY: the OCB's live attribute.
-        unsafe { mark_attr(attr, sys::IOFUNC_ATTR_MTIME | sys::IOFUNC_ATTR_CTIME) };
+        unsafe {
+            mark_attr(
+                attr,
+                sys::IOFUNC_ATTR_MTIME | sys::IOFUNC_ATTR_CTIME | sys::IOFUNC_ATTR_DIRTY_TIME,
+            )
+        };
     }
     // SAFETY: `ctp` is the live context of this message.
     unsafe { sys::_IO_SET_WRITE_NBYTES(&mut *ctp, taken as c_long) };

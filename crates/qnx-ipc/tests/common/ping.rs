@@ -1,5 +1,7 @@
 //! The ping protocol, defined a second time here and in `c/include/qnx_ipc_ping.h`.
-//! Both sides assert the sizes, so a change on one side fails to build.
+//! Both sides assert the struct sizes as fixed numbers, so a change that alters
+//! a size fails to build until that side's assertion is changed too. A change
+//! that keeps the sizes (reordered or retyped fields) is not caught.
 
 use std::mem::size_of;
 

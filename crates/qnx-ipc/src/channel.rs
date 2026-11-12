@@ -67,7 +67,10 @@ impl Channel {
     /// (`ConnectDetach(scoid)`) before returning the pulse, which frees it.
     ///
     /// A received [`Request`] borrows both the channel and `buf`, so it cannot
-    /// outlive the channel it came from: its receive id cannot go stale.
+    /// outlive the channel it came from, and destroying the channel cannot leave
+    /// a request answering a stale receive id. (A client that dies, or a reply
+    /// that fails after it was delivered, can still leave one; see the Known
+    /// limits in `docs/architecture.md`.)
     ///
     /// ```compile_fail
     /// use qnx_ipc::{Channel, ChannelFlags, RecvBuf};
@@ -211,7 +214,15 @@ pub struct RecvBuf {
 
 impl RecvBuf {
     /// A buffer that receives up to `bytes` bytes of each message. It is never
-    /// smaller than a pulse (16 bytes), so pulses always fit.
+    /// smaller than a pulse (a `struct _pulse`), so pulses always fit.
+    ///
+    /// Size it for the largest message the server decodes: at least
+    /// `4 + size_of::<M>()` bytes (header and payload) for each [`Message`]
+    /// type `M`. A longer message is cut to the capacity, and
+    /// [`Request::decode`] of a cut message fails with
+    /// [`Error::Truncated`](crate::Error::Truncated).
+    ///
+    /// [`Message`]: crate::Message
     pub fn with_capacity(bytes: usize) -> RecvBuf {
         RecvBuf {
             data: vec![0; bytes.max(size_of::<sys::_pulse>())],

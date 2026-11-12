@@ -1,6 +1,8 @@
 //! The vehicle-signals demo protocol: the Rust copy of `c/include/vehicle.h`.
 //!
-//! Both copies assert the sizes, so a change on one side fails to build. The
+//! Both copies assert the struct sizes as fixed numbers, so a change that
+//! alters a size fails to build until that side's assertion is changed too. A
+//! change that keeps the sizes (reordered or retyped fields) is not caught. The
 //! safety client includes this file with `#[path]`.
 
 // Every program that includes this file uses only part of it.

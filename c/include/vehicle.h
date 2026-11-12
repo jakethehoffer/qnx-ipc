@@ -1,8 +1,10 @@
 /*
  * The vehicle-signals demo protocol, shared by the C infotainment client
  * (c/infotainment_client.c) and the Rust programs in demo/. The Rust copy is
- * demo/vsigd/src/proto.rs; both sides assert the sizes, so a change on one side
- * fails to build.
+ * demo/vsigd/src/proto.rs. Both sides assert the struct sizes as fixed numbers,
+ * so a change that alters a size fails to build until that side's assertion is
+ * changed too. A change that keeps the sizes (reordered or retyped fields) is
+ * not caught.
  *
  * vsigd registers the name VEHICLE_NAME. A client opens it with name_open,
  * sends one struct vehicle_hello naming itself, then any number of

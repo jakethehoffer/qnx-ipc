@@ -79,6 +79,13 @@ impl<'b> Request<'b> {
     /// Fails with [`Error::Truncated`] if fewer than `4 + size_of::<M>()` bytes
     /// arrived, and with [`Error::UnknownKind`] if the header's kind is not
     /// `M::KIND`.
+    ///
+    /// Only the bytes that fit in the receive buffer are checked. If the client
+    /// sent a complete message but the buffer is smaller than
+    /// `4 + size_of::<M>()`, this also fails with `Truncated`, with `got` the
+    /// buffer's share, not the length sent; compare `got` with
+    /// [`SenderInfo::srcmsglen`] to tell the two apart, or size the
+    /// [`RecvBuf`](crate::RecvBuf) for every message type it decodes.
     pub fn decode<M: Message>(&self) -> Result<M> {
         let () = UserKind::<M>::OK;
         let expected = wire_len::<M>();
@@ -155,8 +162,16 @@ impl<'b> Request<'b> {
     /// Unblocks the sender with error `errno`: its `send` returns
     /// `Err(Error::Os(errno))`.
     ///
+    /// `errno` must be positive. `MsgError` with 0 would make the client's send
+    /// succeed with an empty reply, so a value of 0 or less is not sent: this
+    /// returns `Err(Error::Os(EINVAL))`, and the dropped request answers
+    /// `ENOSYS`.
+    ///
     /// If the error reply fails, the request is dropped and so answers `ENOSYS`.
     pub fn reply_error(mut self, errno: i32) -> Result<()> {
+        if errno <= 0 {
+            return Err(Error::Os(sys::EINVAL as i32));
+        }
         // SAFETY: MsgError takes only integers. `rcvid` is a received, not yet
         // answered message.
         let rc = unsafe { sys::MsgError(self.rcvid, errno as c_int) };

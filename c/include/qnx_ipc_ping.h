@@ -1,7 +1,9 @@
 /*
  * The ping protocol shared by the C programs in c/ and the Rust interop test
- * (crates/qnx-ipc/tests/common/ping.rs). The same layout is written twice and
- * both sides assert the sizes, so a change on one side fails to build.
+ * (crates/qnx-ipc/tests/common/ping.rs). The same layout is written twice.
+ * Both sides assert the struct sizes as fixed numbers, so a change that alters
+ * a size fails to build until that side's assertion is changed too. A change
+ * that keeps the sizes (reordered or retyped fields) is not caught.
  *
  * A typed qnx-ipc message on the wire is a 4-byte header followed by the payload.
  * The client sends struct ping_msg and the server replies with struct pong

@@ -40,10 +40,11 @@ impl Handler for Server {
 fn main() -> qnx_ipc::Result<()> {
     let channel = Channel::new(ChannelFlags::empty())?;
     let conn = Connection::to_local(channel.id())?;
-    thread::scope(|s| {
-        let server = s.spawn(|| channel.serve(&mut RecvBuf::with_capacity(64), &mut Server));
-        let pong: Pong = conn.send(&Ping { n: 41 })?;
-        println!("sent ping 41, got pong {}", pong.n);
-        server.join().expect("server thread panicked")
-    })
+    // The server thread owns the channel. If the send fails, `?` returns from
+    // `main` and the process exits, server thread included; joining a server
+    // that never got its message would wait forever.
+    let server = thread::spawn(move || channel.serve(&mut RecvBuf::with_capacity(64), &mut Server));
+    let pong: Pong = conn.send(&Ping { n: 41 })?;
+    println!("sent ping 41, got pong {}", pong.n);
+    server.join().expect("server thread panicked")
 }

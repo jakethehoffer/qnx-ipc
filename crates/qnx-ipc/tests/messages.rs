@@ -117,6 +117,24 @@ fn unknown_kind_gets_enosys() {
 }
 
 #[test]
+fn reply_error_rejects_non_positive_errno() {
+    // `MsgError(rcvid, 0)` would make the client's send succeed with a zeroed
+    // reply, so `reply_error` refuses 0 and negative values. The refused request
+    // is then dropped, which answers the client ENOSYS.
+    for errno in [0, -1] {
+        let (channel, conn) = setup();
+        let server = serve_one(channel, move |req| req.reply_error(errno));
+        let r: qnx_ipc::Result<Pong> = with_deadline(|| conn.send(&Ping { n: 1 }));
+        assert_eq!(r, Err(Error::Os(ENOSYS)), "client, reply_error({errno})");
+        assert_eq!(
+            server.join().unwrap(),
+            Err(Error::Os(EINVAL)),
+            "server, reply_error({errno})"
+        );
+    }
+}
+
+#[test]
 fn dropped_request_unblocks_client() {
     let (channel, conn) = setup();
     let server = serve_one(channel, |req| drop(req));

@@ -31,7 +31,10 @@ pub struct Pulse {
     /// The pulse code. User pulses use `0..=127`; negative codes come from the
     /// kernel (for example `_PULSE_CODE_DISCONNECT`).
     pub code: i8,
-    /// The pulse value (`sigval.sival_int`).
+    /// The pulse value: the `sival_int` member of the pulse's `sigval`, that
+    /// is its low 32 bits. A wider value is truncated; in particular the
+    /// receive id carried by an [`Unblock`](PulseKind::Unblock) pulse (an
+    /// `rcvid_t`, 64 bits on QNX 8.0) keeps only its low 32 bits.
     pub value: i32,
 }
 
@@ -64,8 +67,9 @@ pub enum PulseKind {
     /// [`Channel::receive`]: crate::Channel::receive
     Disconnect,
     /// A client blocked on this channel was signalled or timed out
-    /// (`_PULSE_CODE_UNBLOCK`, needs [`ChannelFlags::UNBLOCK`]). The value is the
-    /// client's receive id.
+    /// (`_PULSE_CODE_UNBLOCK`, needs [`ChannelFlags::UNBLOCK`]). The kernel sends
+    /// the client's receive id as the value; [`Pulse::value`] keeps only its
+    /// low 32 bits.
     ///
     /// [`ChannelFlags::UNBLOCK`]: crate::ChannelFlags::UNBLOCK
     Unblock,
