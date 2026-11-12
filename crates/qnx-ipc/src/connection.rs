@@ -1,11 +1,12 @@
 //! Client side: a connection to a channel and typed sends over it.
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_long, c_void};
 use core::mem::size_of;
 
 use qnx_ipc_sys as sys;
 
 use crate::message::{Header, Message, UserKind};
+use crate::pulse::PulseCode;
 use crate::{Error, Result};
 
 /// A connection to a channel, owned by this process. Dropping it detaches it.
@@ -87,6 +88,38 @@ impl Connection {
         }
         Ok(reply)
     }
+
+    /// Sends a pulse with `code` and `value` without blocking. The pulse carries
+    /// the calling thread's priority.
+    pub fn send_pulse(&self, code: PulseCode, value: i32) -> Result<()> {
+        let priority = thread_priority()?;
+        // SAFETY: MsgSendPulse takes only integers. `coid` is an attached
+        // connection owned by `self`.
+        let rc = unsafe {
+            sys::MsgSendPulse(
+                self.coid,
+                priority,
+                c_int::from(code.get()),
+                c_long::from(value),
+            )
+        };
+        if rc == -1 {
+            return Err(Error::last_os());
+        }
+        Ok(())
+    }
+}
+
+/// The calling thread's (assigned) scheduling priority, from `SchedGet`.
+pub(crate) fn thread_priority() -> Result<c_int> {
+    let mut param = sys::sched_param::default();
+    // SAFETY: pid 0 and tid 0 name the calling thread; the kernel fills `param`, a
+    // live local of the type SchedGet takes.
+    let rc = unsafe { sys::SchedGet(0, 0, &mut param) };
+    if rc == -1 {
+        return Err(Error::last_os());
+    }
+    Ok(param.sched_priority)
 }
 
 impl Drop for Connection {

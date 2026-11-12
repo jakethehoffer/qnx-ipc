@@ -37,7 +37,8 @@ impl SenderInfo {
 ///
 /// [`reply`](Request::reply) and [`reply_error`](Request::reply_error) consume
 /// the request, so it is answered at most once. A request dropped without an
-/// answer replies `ENOSYS`, so the client never stays blocked.
+/// answer replies `ENOSYS`, or `EIO` if it is dropped while its thread panics,
+/// so the client never stays blocked.
 #[derive(Debug)]
 pub struct Request<'b> {
     rcvid: sys::rcvid_t,
@@ -139,11 +140,18 @@ impl<'b> Request<'b> {
 impl Drop for Request<'_> {
     fn drop(&mut self) {
         if !self.answered {
+            // A request dropped by a panicking handler answers EIO (the server
+            // failed); one dropped normally answers ENOSYS (not handled).
+            let errno = if std::thread::panicking() {
+                sys::EIO
+            } else {
+                sys::ENOSYS
+            };
             // SAFETY: MsgError takes only integers. `rcvid` was not answered yet.
             // A failure (for example the client is gone) cannot be acted on here
             // and is ignored; this never panics.
             unsafe {
-                sys::MsgError(self.rcvid, sys::ENOSYS as c_int);
+                sys::MsgError(self.rcvid, errno as c_int);
             }
         }
     }

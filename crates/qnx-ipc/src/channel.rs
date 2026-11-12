@@ -60,6 +60,10 @@ impl Channel {
     /// [`bytes`](Request::bytes) hold what fit and
     /// [`SenderInfo::srcmsglen`] the full length.
     ///
+    /// On a disconnect pulse ([`PulseKind::Disconnect`](crate::PulseKind::Disconnect))
+    /// this detaches the kernel's server connection to the departed client
+    /// (`ConnectDetach(scoid)`) before returning the pulse, which frees it.
+    ///
     /// This makes no kernel call before the receive itself, so a kernel timeout
     /// armed with `TimerTimeout` just before it applies to the receive.
     pub fn receive<'b>(&self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
@@ -89,6 +93,15 @@ impl Channel {
             // SAFETY: `sival_int` overlaps the start of the union; any bits are a
             // valid i32.
             let value = unsafe { pulse.value.sival_int };
+            if i32::from(pulse.code) == sys::_PULSE_CODE_DISCONNECT {
+                // SAFETY: on a disconnect pulse `scoid` is the kernel's server
+                // connection to the departed client, which stays allocated until
+                // the server detaches it. ConnectDetach takes only an integer; a
+                // failure leaves nothing to clean up and is ignored.
+                unsafe {
+                    sys::ConnectDetach(pulse.scoid);
+                }
+            }
             return Ok(Received::Pulse(Pulse {
                 code: pulse.code,
                 value,

@@ -45,6 +45,7 @@ const FUNCTIONS: &[&str] = &[
     "iofunc_devctl_default",
     "resmgr_msgreply",
     "TimerTimeout",
+    "SchedGet",
 ];
 
 /// Types bound even when no listed function names them directly.
