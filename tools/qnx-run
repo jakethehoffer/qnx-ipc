@@ -12,7 +12,10 @@ shift
 
 ssh_opts=(-i "$QNX_SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
-remote_dir=/tmp/qnx-run
+# A fresh directory per run: QNX can keep a program file busy for a moment after
+# its last process exited, so copying over the previous run's files can fail with
+# "Resource busy" when runs follow each other quickly.
+remote_dir="/tmp/qnx-run/run-$$-$(date +%s)"
 
 ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "mkdir -p $remote_dir"
 
@@ -32,4 +35,10 @@ for arg in "$@"; do
   remote+=" $(quote "$arg")"
 done
 
-exec ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "$remote"
+rc=0
+ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "$remote" || rc=$?
+
+# Best effort: the files may still be busy for a moment, so retry once.
+cleanup="rm -rf $remote_dir 2>/dev/null || { sleep 1; rm -rf $remote_dir; }"
+ssh "${ssh_opts[@]}" -p "$QNX_SSH_PORT" root@127.0.0.1 "$cleanup" >/dev/null 2>&1 || true
+exit "$rc"
