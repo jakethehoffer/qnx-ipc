@@ -197,6 +197,10 @@ in one terminal and, in another (after `source tools/env.sh`),
 `ssh -i "$QNX_SSH_KEY" -p 2222 root@127.0.0.1 slay hello_device`, which also
 removes `/dev/hello`.
 
+## Codelab
+
+[Write a QNX resource manager in Rust](https://jakethehoffer.github.io/qnx-ipc/codelabs-site/write-qnx-resource-manager-rust/) walks from a fresh QNX 8.0 setup to your own `/dev/counter` device, used from the QNX shell and from C. Its source is [docs/codelab/](docs/codelab/write-qnx-resource-manager-rust/write-qnx-resource-manager-rust.md), and the finished device is [`counter_device`](crates/qnx-resmgr/examples/counter_device.rs). Every step was run on QNX 8.0 under QEMU on 2026-11-15.
+
 ## Evidence of QNX use
 
 Everything here calls the QNX 8.0 kernel and libraries directly, and every test

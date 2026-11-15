@@ -1,0 +1,533 @@
+
+<!doctype html>
+
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <meta name="theme-color" content="#4F7DC9">
+  <meta charset="UTF-8">
+  <title>Write a QNX resource manager in Rust</title>
+
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href="//fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="stylesheet" href="https://storage.googleapis.com/claat-public/codelab-elements.css">
+
+  
+  <style>
+    .success {
+      color: #1e8e3e;
+    }
+    .error {
+      color: red;
+    }
+
+     
+    google-codelab #done {
+      display: none !important;
+    }
+  </style>
+
+</head>
+<body>
+
+  <google-codelab-analytics gaid="UA-49880327-14" ga4id=""></google-codelab-analytics>
+
+  <google-codelab codelab-gaid=""
+                  codelab-ga4id=""
+                  id="write-qnx-resource-manager-rust"
+                  title="Write a QNX resource manager in Rust"
+                  environment="web"
+                  feedback-link="https://github.com/jakethehoffer/qnx-ipc/issues">
+    
+      <google-codelab-step label="Welcome" duration="2">
+        <p>On QNX, drivers and system services are ordinary programs called <strong>resource managers</strong>. A resource manager takes over a path such as <code>/dev/counter</code>, and from then on every <code>open</code>, <code>read</code>, <code>write</code> and <code>devctl</code> on that path turns into a message to it. That&#39;s why <code>cat</code>, a shell script and a C program can all talk to a service with no special client library.</p>
+<p>In this codelab you&#39;ll write one in Rust, using the open source <a href="https://github.com/jakethehoffer/qnx-ipc" target="_blank"><code>qnx-ipc</code></a> library, and run it on QNX 8.0 under QEMU.</p>
+<h2 is-upgraded>What you&#39;ll build</h2>
+<p>A small counter device at <code>/dev/counter</code>:</p>
+<ul>
+<li><code>cat /dev/counter</code> prints the count.</li>
+<li><code>echo 5 > /dev/counter</code> adds 5 to it.</li>
+<li>A C program reads the count and resets it with <code>devctl()</code>, QNX&#39;s call for device-specific commands.</li>
+</ul>
+<h2 class="checklist" is-upgraded>What you&#39;ll learn</h2>
+<ul class="checklist">
+<li>How to set up a Rust project that builds for QNX 8.0 and runs on a QEMU target</li>
+<li>How to serve a path from Rust by implementing one trait</li>
+<li>How reads, writes and <code>devctl</code> commands reach your code</li>
+<li>What a resource manager does with the messages it receives</li>
+</ul>
+<p>You only need basic Rust. No QNX experience is assumed.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Before you begin" duration="10">
+        <p>You need a Linux x86_64 machine with KVM. Ubuntu 24.04 under WSL2 on Windows 11 works, and it&#39;s what this codelab was tested on.</p>
+<h2 is-upgraded>A QNX license and the SDP</h2>
+<ol type="1">
+<li>Follow QNX&#39;s codelab <a href="https://qnx.github.io/codelabs/get-non-commercial-qnx-license/" target="_blank">Get a non-commercial QNX license</a> to get your free license.</li>
+<li>In QNX Software Center, install <strong>QNX SDP 8.0</strong> into <code>~/qnx800</code>.</li>
+<li>Also install QNX&#39;s Rust package, <code>com.qnx.qnx800.host.linux.x86_64.rust</code>. It adds a Rust compiler with the standard library prebuilt for QNX 8.0.</li>
+</ol>
+<p>The library&#39;s <a href="https://github.com/jakethehoffer/qnx-ipc/blob/main/docs/toolchain.md" target="_blank">toolchain notes</a> list the exact versions used.</p>
+<h2 is-upgraded>Cargo, QEMU and clang</h2>
+<p>QNX&#39;s Rust package ships <code>rustc</code> but no <code>cargo</code>, so get the matching <code>cargo</code> from rustup (<a href="https://rustup.rs" target="_blank">install rustup</a> first if you don&#39;t have it):</p>
+<pre><code language="language-sh" class="language-sh">rustup toolchain install 1.85.1 --profile minimal
+</code></pre>
+<p>Then install QEMU, and clang (the build generates Rust bindings from the QNX headers with it), and let yourself use KVM:</p>
+<pre><code language="language-sh" class="language-sh">sudo apt install qemu-system-x86 qemu-utils clang libclang-dev
+sudo usermod -aG kvm $USER
+</code></pre>
+<p>Log out and back in (for WSL, run <code>wsl --shutdown</code> from Windows) so the group change takes effect.</p>
+<h2 is-upgraded>About the QNX target</h2>
+<p>QNX&#39;s own QEMU codelabs (<a href="https://qnx.github.io/codelabs/setup-qsti-qemu-on-ubuntu/" target="_blank">on Ubuntu</a>, <a href="https://qnx.github.io/codelabs/qsti-qemu-on-wsl/" target="_blank">on WSL</a>) boot QNX&#39;s Quick Start Target Image. You don&#39;t need that image here. The repository you&#39;ll clone has a script that builds a small QNX 8.0 image from your own SDP and boots it headless, with SSH on port 2222.</p>
+<p><em>When you&#39;re ready, continue.</em></p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Get the code and start QNX" duration="5">
+        <ol type="1">
+<li>Clone the library and go into it:<pre><code language="language-sh" class="language-sh">git clone https://github.com/jakethehoffer/qnx-ipc.git
+cd qnx-ipc
+</code></pre>
+</li>
+<li>Load the build environment. This sets up the QNX SDP, points cargo at QNX&#39;s <code>rustc</code>, and sets <code>$QNX_RUST_TARGET</code> to <code>x86_64-pc-nto-qnx800</code>:<pre><code language="language-sh" class="language-sh">source tools/env.sh
+</code></pre>
+Do this in every new terminal you use for this codelab.</li>
+<li>Check that the pieces are there:<pre><code language="language-sh" class="language-sh">&#34;$RUSTC&#34; -V
+cargo -V
+qemu-system-x86_64 --version
+</code></pre>
+You should see QNX&#39;s compiler (the <code>-dev</code> suffix), rustup&#39;s cargo of the same version, and QEMU (your QEMU version may differ):<pre><code language="language-text" class="language-text">OUTPUT_VERSIONS
+</code></pre>
+</li>
+<li>Start the QNX target:<pre><code language="language-sh" class="language-sh">tools/qemu-up.sh
+</code></pre>
+The first run builds the image with QNX&#39;s <code>mkqnximage</code>. Later runs reuse the image, or the VM if it&#39;s already running. Either way, the script waits until QNX answers on SSH and ends with a line that starts with <code>QNX target up</code>.</li>
+</ol>
+<p>Positive : The target keeps running in the background. Stop it with <code>tools/qemu-down.sh</code> when you&#39;re done.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Run your first resource manager" duration="5">
+        <p>The repository comes with a tiny example, <code>hello_device</code>, that serves <code>/dev/hello</code>.</p>
+<ol type="1">
+<li>In your first terminal, run it:<pre><code language="language-sh" class="language-sh">cargo run -p qnx-resmgr --example hello_device --target $QNX_RUST_TARGET
+</code></pre>
+Cargo builds the example for QNX. Then <code>tools/qnx-run</code>, which <code>tools/env.sh</code> set up as cargo&#39;s runner for the QNX target, copies the binary to the target over SSH and runs it there as root. The first build takes a while. After cargo&#39;s build messages, the example prints:<pre><code language="language-text" class="language-text">OUTPUT_HELLO_RUN
+</code></pre>
+It keeps running, so leave this terminal alone.</li>
+<li>Open a second terminal. Load the environment and make a short alias for logging in to the target:<pre><code language="language-sh" class="language-sh">cd qnx-ipc
+source tools/env.sh
+alias qnx=&#39;ssh -i &#34;$QNX_SSH_KEY&#34; -p &#34;$QNX_SSH_PORT&#34; -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@127.0.0.1&#39;
+</code></pre>
+The <code>-o</code> options skip the host key check. That&#39;s fine for a local VM whose key changes every time the image is rebuilt.</li>
+<li>Log in to the QNX shell:<pre><code language="language-sh" class="language-sh">qnx
+</code></pre>
+You get a <code>#</code> prompt. You&#39;re on QNX now.</li>
+<li>Read the device and look at it:<pre><code language="language-shell" class="language-shell">cat /dev/hello
+ls -l /dev/hello
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_HELLO_CAT
+</code></pre>
+<code>/dev/hello</code> is a character device, and the text comes straight from the Rust program in your first terminal.</li>
+<li>Stop the example:<pre><code language="language-shell" class="language-shell">slay hello_device
+</code></pre>
+<code>slay</code> stops a program by name. Back in the first terminal, the output ends with <code>Terminated</code> and your prompt comes back. The path goes away with the program:<pre><code language="language-shell" class="language-shell">ls /dev/hello
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_HELLO_GONE
+</code></pre>
+</li>
+</ol>
+<p>Stay logged in to the QNX shell in the second terminal for the next steps.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Read the hello example" duration="3">
+        <p>Open <code>crates/qnx-resmgr/examples/hello_device.rs</code>. Here is the whole program:</p>
+<pre><code language="language-rust" class="language-rust">//! Serves `/dev/hello` until killed: `cat /dev/hello` prints `hello from Rust`.
+//!
+//! Run as root (attaching under `/dev` needs it).
+
+use qnx_resmgr::{Device, ResourceManager};
+
+struct Hello;
+
+impl Device for Hello {
+    fn read(&amp;self) -&gt; qnx_ipc::Result&lt;Vec&lt;u8&gt;&gt; {
+        Ok(b&#34;hello from Rust\n&#34;.to_vec())
+    }
+}
+
+fn main() -&gt; qnx_ipc::Result&lt;()&gt; {
+    eprintln!(&#34;serving /dev/hello&#34;);
+    ResourceManager::new(&#34;/dev/hello&#34;)?.run(Hello)
+}
+</code></pre>
+<p>Two types do the work:</p>
+<ul>
+<li><strong><code>Device</code></strong> is a trait with three methods. <code>read</code> returns the file&#39;s content. <code>write</code> and <code>devctl</code> have defaults that reject the call with an error, so a read-only device only needs <code>read</code>.</li>
+<li><strong><code>ResourceManager</code></strong> takes over a path. <code>run</code> attaches the device there and then answers messages on the calling thread until the program is killed.</li>
+</ul>
+<p>You never see a QNX message in this code. The library connects QNX&#39;s resource manager framework to the trait, and the framework handles <code>open</code>, <code>close</code>, <code>stat</code> and permissions for you.</p>
+<p>Each <code>open</code> of the path gets its own snapshot: the library calls <code>read</code> on the first read of that open file and serves every later read from the result. So a reader always sees consistent content, even if it reads one byte at a time.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Create a counter device" duration="5">
+        <p>Now write your own. Start with a counter you can read.</p>
+<ol type="1">
+<li>Back on your Linux machine, create <code>crates/qnx-resmgr/examples/my_counter.rs</code> in the repository with this content:<pre><code language="language-rust" class="language-rust">//! Serves `/dev/counter` until killed: `cat /dev/counter` prints the count.
+//!
+//! Run as root (attaching under `/dev` needs it).
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use qnx_resmgr::{Device, ResourceManager};
+
+struct Counter {
+    count: AtomicU64,
+}
+
+impl Device for Counter {
+    fn read(&amp;self) -&gt; qnx_ipc::Result&lt;Vec&lt;u8&gt;&gt; {
+        let count = self.count.load(Ordering::SeqCst);
+        Ok(format!(&#34;{count}\n&#34;).into_bytes())
+    }
+}
+
+fn main() -&gt; qnx_ipc::Result&lt;()&gt; {
+    eprintln!(&#34;serving /dev/counter&#34;);
+    let counter = Counter {
+        count: AtomicU64::new(0),
+    };
+    ResourceManager::new(&#34;/dev/counter&#34;)?.run(counter)
+}
+</code></pre>
+The library may call your device from any thread, so <code>Device</code> requires <code>Send + Sync</code> and its methods take <code>&self</code>. An <code>AtomicU64</code> gives you a counter that&#39;s safe to change through <code>&self</code>.</li>
+<li>In your first terminal, run it:<pre><code language="language-sh" class="language-sh">cargo run -p qnx-resmgr --example my_counter --target $QNX_RUST_TARGET
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_STAGE1_RUN
+</code></pre>
+</li>
+<li>In the QNX shell in your second terminal, read it:<pre><code language="language-shell" class="language-shell">cat /dev/counter
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_STAGE1_CAT
+</code></pre>
+</li>
+<li>Try writing to it:<pre><code language="language-shell" class="language-shell">echo 5 &gt; /dev/counter
+echo $?
+printf &#39;5\n&#39; &gt; /dev/counter
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_STAGE1_ECHO
+</code></pre>
+The device doesn&#39;t implement <code>write</code> yet, so the library&#39;s default answers with <code>ENOSYS</code> (&#34;Function not implemented&#34;). The <code>echo</code> on this target only reports a failed write through its exit status, 1, while <code>printf</code> prints the error. Any error your device returns reaches the client as an <code>errno</code> like this one.</li>
+<li>Stop it:<pre><code language="language-shell" class="language-shell">slay my_counter
+</code></pre>
+</li>
+</ol>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Accept writes" duration="5">
+        <p>Make <code>echo 5 > /dev/counter</code> add 5 to the count.</p>
+<ol type="1">
+<li>Replace <code>my_counter.rs</code> with this version. It adds a <code>write</code> method and an <code>EINVAL</code> constant:<pre><code language="language-rust" class="language-rust">//! Serves `/dev/counter` until killed: `cat /dev/counter` prints the count and
+//! `echo 5 &gt; /dev/counter` adds 5 to it.
+//!
+//! Run as root (attaching under `/dev` needs it).
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use qnx_ipc::Error;
+use qnx_ipc_sys as sys;
+use qnx_resmgr::{Device, ResourceManager};
+
+const EINVAL: i32 = sys::EINVAL as i32;
+
+struct Counter {
+    count: AtomicU64,
+}
+
+impl Device for Counter {
+    fn read(&amp;self) -&gt; qnx_ipc::Result&lt;Vec&lt;u8&gt;&gt; {
+        let count = self.count.load(Ordering::SeqCst);
+        Ok(format!(&#34;{count}\n&#34;).into_bytes())
+    }
+
+    fn write(&amp;self, data: &amp;[u8]) -&gt; qnx_ipc::Result&lt;usize&gt; {
+        let text = std::str::from_utf8(data).map_err(|_| Error::Os(EINVAL))?;
+        let n: u64 = text.trim().parse().map_err(|_| Error::Os(EINVAL))?;
+        self.count.fetch_add(n, Ordering::SeqCst);
+        Ok(data.len())
+    }
+}
+
+fn main() -&gt; qnx_ipc::Result&lt;()&gt; {
+    eprintln!(&#34;serving /dev/counter&#34;);
+    let counter = Counter {
+        count: AtomicU64::new(0),
+    };
+    ResourceManager::new(&#34;/dev/counter&#34;)?.run(counter)
+}
+</code></pre>
+<code>write</code> gets each write&#39;s whole payload, here the text <code>5</code> plus a newline from <code>echo</code>. It returns how many bytes it took. Text that isn&#39;t a number gets <code>EINVAL</code> (&#34;Invalid argument&#34;).</li>
+<li>Run it again in your first terminal:<pre><code language="language-sh" class="language-sh">cargo run -p qnx-resmgr --example my_counter --target $QNX_RUST_TARGET
+</code></pre>
+</li>
+<li>In the QNX shell, add to the counter, read it, and send it something it can&#39;t parse:<pre><code language="language-shell" class="language-shell">echo 5 &gt; /dev/counter
+echo 2 &gt; /dev/counter
+cat /dev/counter
+printf &#39;hello\n&#39; &gt; /dev/counter
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_STAGE2
+</code></pre>
+The two writes added up to 7, and <code>hello</code> got the <code>EINVAL</code> your <code>write</code> returned.</li>
+<li>Stop it:<pre><code language="language-shell" class="language-shell">slay my_counter
+</code></pre>
+</li>
+</ol>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Add a devctl command" duration="6">
+        <p>Text works well for people and shell scripts. Programs often want something more direct, like reading the count as a number or resetting it. On QNX that&#39;s what <code>devctl()</code> is for: it sends a numbered command and a block of data to a device and gets data back.</p>
+<p>A <code>devctl</code> command number packs four things, the way the <code>__DIOF</code>, <code>__DIOT</code> and <code>__DION</code> macros in <code><devctl.h></code> build it: the size of the data, a class, a command number, and the direction the data goes. <code>_DCMD_MISC</code> (<code>0x05</code>) is the class QNX recommends for your own commands. You&#39;ll add two commands:</p>
+<ul>
+<li><code>DCMD_COUNTER_GET</code>, which is <code>__DIOF(_DCMD_MISC, 1, uint64_t)</code> in C: 8 bytes come back from the device.</li>
+<li><code>DCMD_COUNTER_RESET</code>, which is <code>__DION(_DCMD_MISC, 2)</code> in C: no data either way.</li>
+</ul>
+<ol type="1">
+<li>Replace <code>my_counter.rs</code> with the finished version:<pre><code language="language-rust" class="language-rust">//! Serves `/dev/counter` until killed: `cat /dev/counter` prints the count,
+//! `echo 5 &gt; /dev/counter` adds 5 to it, and two `devctl` commands read the
+//! count as a number or reset it.
+//!
+//! Run as root (attaching under `/dev` needs it).
+
+use std::mem::size_of;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use qnx_ipc::Error;
+use qnx_ipc_sys as sys;
+use qnx_resmgr::{Device, ResourceManager};
+
+const EINVAL: i32 = sys::EINVAL as i32;
+const ENOTTY: i32 = sys::ENOTTY as i32;
+
+/// `_DCMD_MISC` from `&lt;devctl.h&gt;`: the class for your own commands.
+const DCMD_MISC: u32 = 0x05;
+
+/// `__DIOF(_DCMD_MISC, 1, uint64_t)`: the count comes back as a `u64`.
+const DCMD_COUNTER_GET: u32 =
+    ((size_of::&lt;u64&gt;() as u32) &lt;&lt; 16) | (DCMD_MISC &lt;&lt; 8) | 1 | sys::_POSIX_DEVDIR_FROM;
+
+/// `__DION(_DCMD_MISC, 2)`: sets the count to 0, no data.
+const DCMD_COUNTER_RESET: u32 = (DCMD_MISC &lt;&lt; 8) | 2 | sys::_POSIX_DEVDIR_NONE;
+
+struct Counter {
+    count: AtomicU64,
+}
+
+impl Device for Counter {
+    fn read(&amp;self) -&gt; qnx_ipc::Result&lt;Vec&lt;u8&gt;&gt; {
+        let count = self.count.load(Ordering::SeqCst);
+        Ok(format!(&#34;{count}\n&#34;).into_bytes())
+    }
+
+    fn write(&amp;self, data: &amp;[u8]) -&gt; qnx_ipc::Result&lt;usize&gt; {
+        let text = std::str::from_utf8(data).map_err(|_| Error::Os(EINVAL))?;
+        let n: u64 = text.trim().parse().map_err(|_| Error::Os(EINVAL))?;
+        self.count.fetch_add(n, Ordering::SeqCst);
+        Ok(data.len())
+    }
+
+    fn devctl(&amp;self, cmd: u32, data: &amp;mut [u8]) -&gt; qnx_ipc::Result&lt;usize&gt; {
+        match cmd {
+            DCMD_COUNTER_GET =&gt; {
+                let count = self.count.load(Ordering::SeqCst).to_ne_bytes();
+                let out = data.get_mut(..count.len()).ok_or(Error::Os(EINVAL))?;
+                out.copy_from_slice(&amp;count);
+                Ok(count.len())
+            }
+            DCMD_COUNTER_RESET =&gt; {
+                self.count.store(0, Ordering::SeqCst);
+                Ok(0)
+            }
+            _ =&gt; Err(Error::Os(ENOTTY)),
+        }
+    }
+}
+
+fn main() -&gt; qnx_ipc::Result&lt;()&gt; {
+    eprintln!(&#34;serving /dev/counter&#34;);
+    let counter = Counter {
+        count: AtomicU64::new(0),
+    };
+    ResourceManager::new(&#34;/dev/counter&#34;)?.run(counter)
+}
+</code></pre>
+<code>devctl</code> gets the full command word and a buffer as big as the client&#39;s data. For <code>DCMD_COUNTER_GET</code> it writes the count into the buffer and returns how many bytes it wrote. Commands it doesn&#39;t know get <code>ENOTTY</code>, the usual answer for &#34;not a command this device supports&#34;.Negative : Any program that can open the path can send any command, even if it opened it read-only. Check in your device what each command may change. Here, anyone who can open <code>/dev/counter</code> can reset it.</li>
+<li>Run it in your first terminal:<pre><code language="language-sh" class="language-sh">cargo run -p qnx-resmgr --example my_counter --target $QNX_RUST_TARGET
+</code></pre>
+</li>
+<li>In the QNX shell, give it a count to work with:<pre><code language="language-shell" class="language-shell">echo 40 &gt; /dev/counter
+echo 2 &gt; /dev/counter
+cat /dev/counter
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_STAGE3_CAT
+</code></pre>
+</li>
+</ol>
+<p>Leave the counter running. Next, a C program will use the new commands.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Talk to the counter from C" duration="6">
+        <p>Any QNX program can use your device, whatever language it&#39;s written in. Here&#39;s a C client that reads the count with <code>DCMD_COUNTER_GET</code>, resets it with <code>DCMD_COUNTER_RESET</code>, and then reads the file with plain <code>read()</code>.</p>
+<ol type="1">
+<li>Leave the QNX shell for now:<pre><code language="language-shell" class="language-shell">exit
+</code></pre>
+</li>
+<li>Create <code>c/my_counter_client.c</code> in the repository:<pre><code language="language-c" class="language-c">/* Uses /dev/counter from C: reads the count with devctl(), resets it, then
+ * reads the file with read(). */
+#include &lt;devctl.h&gt;
+#include &lt;errno.h&gt;
+#include &lt;fcntl.h&gt;
+#include &lt;inttypes.h&gt;
+#include &lt;stdint.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+
+/* The same command numbers as in the Rust device. */
+#define DCMD_COUNTER_GET   __DIOF(_DCMD_MISC, 1, uint64_t)
+#define DCMD_COUNTER_RESET __DION(_DCMD_MISC, 2)
+
+int main(void)
+{
+    int fd = open(&#34;/dev/counter&#34;, O_RDWR);
+    if (fd == -1) {
+        perror(&#34;open /dev/counter&#34;);
+        return 1;
+    }
+
+    uint64_t count = 0;
+    int err = devctl(fd, DCMD_COUNTER_GET, &amp;count, sizeof count, NULL);
+    if (err != EOK) {
+        fprintf(stderr, &#34;DCMD_COUNTER_GET: %s\n&#34;, strerror(err));
+        return 1;
+    }
+    printf(&#34;devctl: the count is %&#34; PRIu64 &#34;\n&#34;, count);
+
+    err = devctl(fd, DCMD_COUNTER_RESET, NULL, 0, NULL);
+    if (err != EOK) {
+        fprintf(stderr, &#34;DCMD_COUNTER_RESET: %s\n&#34;, strerror(err));
+        return 1;
+    }
+    printf(&#34;devctl: reset the count\n&#34;);
+
+    char text[32];
+    ssize_t n = read(fd, text, sizeof text - 1);
+    if (n == -1) {
+        perror(&#34;read /dev/counter&#34;);
+        return 1;
+    }
+    text[n] = &#39;\0&#39;;
+    printf(&#34;read: %s&#34;, text);
+
+    close(fd);
+    return 0;
+}
+</code></pre>
+In C, <code>devctl()</code> returns an error number directly (<code>EOK</code> on success) instead of setting <code>errno</code>.</li>
+<li>Build it with QNX&#39;s C compiler, <code>qcc</code>, through the repository&#39;s helper:<pre><code language="language-sh" class="language-sh">tools/build-c.sh c/my_counter_client.c &#34;$CARGO_TARGET_DIR/my_counter_client&#34;
+</code></pre>
+</li>
+<li>Run it on the target. <code>tools/qnx-run</code> is the same script cargo uses: it copies the program over, runs it, and deletes it afterwards.<pre><code language="language-sh" class="language-sh">tools/qnx-run &#34;$CARGO_TARGET_DIR/my_counter_client&#34;
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_C
+</code></pre>
+The C macros and the Rust constants produce the same command numbers, so the Rust device recognized both commands.</li>
+<li>Log back in, check the count from the shell, and stop the counter:<pre><code language="language-sh" class="language-sh">qnx
+</code></pre>
+<pre><code language="language-shell" class="language-shell">cat /dev/counter
+slay my_counter
+exit
+</code></pre>
+<pre><code language="language-text" class="language-text">OUTPUT_FINAL_CAT
+</code></pre>
+</li>
+</ol>
+<p>The finished example is in the repository as <a href="https://github.com/jakethehoffer/qnx-ipc/blob/main/crates/qnx-resmgr/examples/counter_device.rs" target="_blank"><code>crates/qnx-resmgr/examples/counter_device.rs</code></a>, and the C client as <a href="https://github.com/jakethehoffer/qnx-ipc/blob/main/docs/codelab/write-qnx-resource-manager-rust/counter_client.c" target="_blank"><code>docs/codelab/write-qnx-resource-manager-rust/counter_client.c</code></a>, if you want to compare.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="How it works" duration="4">
+        <p>QNX&#39;s kernel does very little by itself: it schedules threads and passes messages. Almost everything else, including file systems, the network stack and drivers, is a separate process that receives messages. A resource manager is one of these processes.</p>
+<p>Here&#39;s what happened when you ran <code>cat /dev/counter</code>:</p>
+<ol type="1">
+<li>When your program started, <code>ResourceManager::run</code> created a channel for messages and registered <code>/dev/counter</code> with QNX&#39;s process manager, which keeps track of which process owns which path.</li>
+<li><code>cat</code> called <code>open("/dev/counter")</code>. The C library asked the process manager who owns that path, connected to your program&#39;s channel, and sent it an open message. QNX&#39;s resource manager framework (<code>iofunc</code>) handled the open and checked permissions.</li>
+<li><code>cat</code> called <code>read()</code>. That became a read message to your program, and <code>cat</code> was blocked until the reply came back. The library called your <code>Device::read</code>, and the reply carried your bytes into <code>cat</code>&#39;s buffer.</li>
+<li><code>write()</code> and <code>devctl()</code> work the same way: a message to your program, a call to your method, a reply with the result or the <code>errno</code>.</li>
+</ol>
+<p>The library keeps the QNX parts safe: it owns the kernel objects and releases them, makes sure each message gets exactly one reply, and turns a panic in your device into an <code>EIO</code> error for the client while it keeps serving. The <a href="https://github.com/jakethehoffer/qnx-ipc/blob/main/docs/architecture.md" target="_blank">architecture notes</a> explain how.</p>
+<h2 is-upgraded>Why a file interface matters</h2>
+<ul>
+<li><strong>Every tool works. </strong><code>cat</code>, <code>echo</code>, shell scripts and programs in any language can use your device with nothing extra. You tested yours from the shell before writing a single line of client code.</li>
+<li><strong>One permission model.</strong> The path has normal file permissions, so you control access the same way as for any file.</li>
+<li><strong>Drivers are just programs.</strong> Your device ran as an ordinary process. If it crashes, it doesn&#39;t take the kernel down with it, and you can restart it.</li>
+<li><strong>Priority follows the request.</strong> When a client sends a message, QNX runs the server&#39;s thread at the client&#39;s priority while it handles that message. Urgent requests get handled at urgent priority, without the server having to manage it.</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Clean up and next steps" duration="2">
+        <h2 is-upgraded>Clean up</h2>
+<p>When you&#39;re done, stop the QNX target from your Linux machine:</p>
+<pre><code language="language-sh" class="language-sh">tools/qemu-down.sh
+</code></pre>
+<h2 is-upgraded>Where to go next</h2>
+<ul>
+<li>Run the library&#39;s <a href="https://github.com/jakethehoffer/qnx-ipc/blob/main/demo/README.md" target="_blank">vehicle-signals demo</a> with <code>tools/demo.sh</code>. It serves signals as files under <code>/dev/vehicle</code> and shows priority inheritance between a Rust server and Rust and C clients.</li>
+<li>Read the <code>Device</code> and <code>ResourceManager</code> documentation: <code>env -u RUSTC cargo doc --no-deps --workspace --target x86_64-unknown-linux-gnu --open</code>.</li>
+<li>Use <code>ResourceManager::spawn</code> to serve a device on a background thread while your program does other work.</li>
+<li>Learn more about resource managers in QNX&#39;s <a href="https://www.qnx.com/developers/docs/8.0/com.qnx.doc.neutrino.resmgr/topic/about.html" target="_blank">Writing a Resource Manager</a> guide.</li>
+</ul>
+<h2 is-upgraded>How this codelab was made</h2>
+<p>The <code>qnx-ipc</code> library and this codelab were written by an AI coding agent (Claude) directed by Jake Hoffman. Every command and every code block here was run on QNX 8.0 under QEMU on 2026-11-15, and the output shown is what it printed.</p>
+<p>Questions or problems? <a href="https://github.com/jakethehoffer/qnx-ipc/issues" target="_blank">Open an issue</a>.</p>
+
+
+      </google-codelab-step>
+    
+  </google-codelab>
+
+  <script src="https://storage.googleapis.com/claat-public/native-shim.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/custom-elements.min.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/prettify.js"></script>
+  <script src="https://storage.googleapis.com/claat-public/codelab-elements.js"></script>
+  <script src="//support.google.com/inapp/api.js"></script>
+
+  <script>
+    
+    navigation.addEventListener("navigate", (event) => {
+    const url = new URL(event.destination.url);
+
+    if (url.pathname == "/") {
+      window.location.href = "https://qnx.github.io/codelabs/";
+    }
+  });
+  </script>
+
+</body>
+</html>

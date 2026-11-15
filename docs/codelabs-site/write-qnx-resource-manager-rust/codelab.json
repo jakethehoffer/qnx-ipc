@@ -1,0 +1,27 @@
+{
+  "environment": "web",
+  "format": "html",
+  "prefix": "https://storage.googleapis.com",
+  "mainga": "UA-49880327-14",
+  "updated": "2026-11-15T13:24:31-05:00",
+  "id": "write-qnx-resource-manager-rust",
+  "duration": 53,
+  "title": "Write a QNX resource manager in Rust",
+  "authors": "Jake Hoffman",
+  "summary": "Serve your own /dev file from safe Rust on QNX 8.0, then use it from the QNX shell and from C.",
+  "source": "docs/codelab/write-qnx-resource-manager-rust/write-qnx-resource-manager-rust.md",
+  "theme": "",
+  "status": [
+    "published"
+  ],
+  "category": [
+    "qnx",
+    "rust",
+    "resourcemanagers"
+  ],
+  "tags": [
+    "intermediate"
+  ],
+  "feedback": "https://github.com/jakethehoffer/qnx-ipc/issues",
+  "url": "write-qnx-resource-manager-rust"
+}
