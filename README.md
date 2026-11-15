@@ -104,7 +104,7 @@ stops. The signals are simulated; there is no vehicle bus.
 
 Steps 3 to 9 of a checked run of `tools/demo.sh --headless`, copied from
 [docs/demo-log.txt](docs/demo-log.txt) (the signal values change from run to
-run; `tools/test-all.sh` fails if the rest of the two differ):
+run; `tools/test-all.sh` fails if a line is added, dropped or changed):
 
 <!-- begin: docs/demo-log.txt from step 3 (checked by tools/test-all.sh) -->
 ```text
@@ -151,7 +151,7 @@ The priorities in the `served` lines are not copied from the request: `vsigd`
 asks the kernel (`SchedGet`, `sched_curpriority`) what priority its own thread
 runs at while it handles each request. It starts at 20, runs at 40 for the
 safety client and at 10 for the infotainment client, and sets no priority
-itself. `vsigd` logs a `served` line for every signal request; after everything has
+itself. `vsigd` logs a `served` line for every signal request it serves; after everything has
 stopped, the demo prints each distinct one from the whole run, and
 `tools/demo-check.sh` fails if any of them shows a priority other than the
 client's.
