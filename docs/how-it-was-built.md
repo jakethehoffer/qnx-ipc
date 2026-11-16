@@ -133,9 +133,9 @@ programs for the interop tests), and the demo checked from its log
 - **The `libc` crate does not build for QNX 8.0.** The locked version 0.2.191
   only knows QNX 7.x target environments, so the errno constants come from the
   generated bindings instead (`a734205`).
-- **Flaky copies to the target.** Back-to-back test runs failed about 3 times
-  in 8 with `scp: ... Resource busy`: QNX keeps a program file busy for a
-  moment after the process exits. The runner now uses a fresh directory per run
+- **Flaky copies to the target.** Back-to-back test runs sometimes failed
+  with `scp: ... Resource busy`, because the runner copied over a program file
+  whose last process had only just exited. The runner now uses a fresh directory per run
   (`dd17a5b`).
 - **Smaller ones:** a C sign-compare warning (`-Werror`) in the ping server;
   `ssh` hanging when the demo started programs with `nohup ... &` (fixed with a

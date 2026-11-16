@@ -10,6 +10,8 @@ out="$img/output"
 port="$QNX_SSH_PORT"
 key="$QNX_SSH_KEY"
 
+# ssh-keygen does not create the key's directory, and a fresh host has no ~/.ssh.
+mkdir -p "$(dirname "$key")"
 [ -f "$key" ] || ssh-keygen -q -t ed25519 -N '' -C qnx-target -f "$key"
 mkdir -p "$img/local/snippets"
 

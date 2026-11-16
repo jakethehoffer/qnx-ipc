@@ -15,7 +15,7 @@ pub enum Error {
         /// Bytes that arrived.
         got: usize,
     },
-    /// A message carried a kind that no handler is registered for.
+    /// A message carried a kind other than the one the receiver decoded it as.
     UnknownKind(u16),
     /// A channel or path name was rejected (for example it contained a NUL byte).
     InvalidName(String),

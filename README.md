@@ -27,11 +27,18 @@ Rust is spreading in automotive and industrial software, the markets QNX
 serves, because it rules out whole classes of memory bugs. QNX is bringing Rust
 to QNX 8.0 now: its Software Center ships a Rust compiler with the standard
 library prebuilt for QNX (this project uses it), and its `qnx-ports` project
-is porting crates such as `libc`, `mio`, `nix` and `rustix`. But when we
-checked crates.io and GitHub on 2026-11-10 there was no Rust library for QNX's
-native message passing or resource managers. Rust code on QNX had two choices:
-avoid QNX's core strengths, or hand-write `unsafe` FFI against the raw C API,
-where one missed reply leaves a client blocked forever.
+is porting crates such as `libc`, `mio`, `nix` and `rustix`. The QNX-native
+layer is the part still missing. When we checked on 2026-11-16, crates.io had
+no crate for QNX's native message passing or resource managers. On GitHub we
+found two earlier efforts, neither published as a crate: Ferrous Systems'
+[qnx-message-passing](https://github.com/ferrocene/qnx-message-passing), an
+example library for `name_attach` and `MsgSend` servers and clients built with
+the Ferrocene toolchain, and
+[qnx650-crates](https://github.com/korhojoa/qnx650-crates), which targets ARM
+QNX 6.5. We found no Rust resource-manager library for QNX 8.0 at all. So a
+Rust team on QNX 8.0 that wants a service other programs can open as a file
+still has two choices: avoid QNX's core strengths, or hand-write `unsafe` FFI
+against the raw C API, where one missed reply leaves a client blocked forever.
 
 `qnx-ipc` gives Rust programs that API safely. Kernel objects are owned and
 released on drop; a request is answered at most once, cannot outlive its
@@ -203,8 +210,9 @@ removes `/dev/hello`.
 
 ## Evidence of QNX use
 
-Everything here calls the QNX 8.0 kernel and libraries directly, and every test
-runs on QNX:
+Everything here calls the QNX 8.0 kernel and libraries directly, and every
+runtime test runs on QNX (lint, the docs build and the `compile_fail` checks
+run on the host compiler):
 
 | QNX feature | Where |
 | --- | --- |

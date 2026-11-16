@@ -16,8 +16,10 @@ bitflags::bitflags! {
         /// Deliver a `_PULSE_CODE_DISCONNECT` pulse when a client's last
         /// connection goes away (`_NTO_CHF_DISCONNECT`).
         const DISCONNECT = sys::_NTO_CHF_DISCONNECT;
-        /// Deliver a `_PULSE_CODE_UNBLOCK` pulse when a blocked client is
-        /// signalled or times out, instead of unblocking it (`_NTO_CHF_UNBLOCK`).
+        /// Deliver a `_PULSE_CODE_UNBLOCK` pulse when a client that is waiting
+        /// for its reply is signalled or times out, and keep that client
+        /// blocked until the server answers it (`_NTO_CHF_UNBLOCK`). A client
+        /// still waiting to be received is unblocked at once, with no pulse.
         const UNBLOCK = sys::_NTO_CHF_UNBLOCK;
         /// Do not inherit the client's priority when receiving
         /// (`_NTO_CHF_FIXED_PRIORITY`).

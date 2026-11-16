@@ -15,7 +15,8 @@ pub struct SenderInfo {
     pub pid: i32,
     /// Thread id of the sender.
     pub tid: i32,
-    /// The sender's priority (the receiving thread runs at this priority).
+    /// The sender's priority. The receiving thread runs at this priority
+    /// unless the channel was created with `ChannelFlags::FIXED_PRIORITY`.
     pub priority: i32,
     /// The full length of the message the sender sent, which can be more than
     /// the receive buffer holds.
