@@ -183,6 +183,50 @@ fn short_message_is_rejected() {
     );
 }
 
+/// What QNX 8.0 does when a reply cannot be written into the client's buffer:
+/// the server's `MsgReply` succeeds and the kernel unblocks the client with
+/// `EFAULT`. The client's own fault never comes back to the server as a failed
+/// reply, so a reply that does fail means the client is no longer waiting on
+/// that receive id.
+#[test]
+fn reply_into_bad_client_buffer_gives_client_efault() {
+    let (channel, conn) = setup();
+    let server = serve_one(channel, |req| req.reply(&Pong { n: 1 }));
+
+    let header = qnx_ipc::Header {
+        kind: Ping::KIND,
+        reserved: 0,
+    };
+    let ping = Ping { n: 1 };
+    let mut raw = Vec::new();
+    raw.extend_from_slice(bytemuck::bytes_of(&header));
+    raw.extend_from_slice(bytemuck::bytes_of(&ping));
+    let siov = sys::iovec {
+        __bindgen_anon_1: sys::iovec__bindgen_ty_1 {
+            iov_base_const: raw.as_ptr().cast(),
+        },
+        iov_len: raw.len() as sys::_Sizet,
+    };
+    // A reply buffer in the unmapped first page, so the kernel cannot write the
+    // reply into it.
+    let riov = sys::iovec {
+        __bindgen_anon_1: sys::iovec__bindgen_ty_1 {
+            iov_base: 8usize as *mut std::ffi::c_void,
+        },
+        iov_len: size_of::<Pong>() as sys::_Sizet,
+    };
+    // SAFETY: the send iovec points at a live local buffer of the stated length.
+    // The reply iovec is deliberately invalid; the kernel checks every access to
+    // it and reports a fault instead of writing, so no memory of this process is
+    // touched.
+    let rc = with_deadline(|| unsafe { sys::MsgSendv(conn.coid(), &siov, 1, &riov, 1) });
+    let client_err = Error::last_os();
+
+    assert_eq!(rc, -1, "the client must not see a successful reply");
+    assert_eq!(client_err, Error::Os(sys::EFAULT as i32), "client");
+    assert_eq!(server.join().unwrap(), Ok(()), "server");
+}
+
 #[test]
 fn request_reports_sender() {
     let (channel, conn) = setup();

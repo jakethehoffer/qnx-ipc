@@ -41,6 +41,7 @@ expect 'served safety-client at priority 40$' 'served safety-client at priority 
 expect 'served infotainment-client at priority 10$' 'served infotainment-client at priority 10'
 expect 'restarting infotainment-client$' 'restarting infotainment-client'
 expect '^speed_kmh=[0-9]+\.[0-9]$' 'cat /dev/vehicle/speed output (speed_kmh=<n>.<d>)'
+expect '^brake_kpa=[0-9]+\.[0-9]$' 'cat /dev/vehicle/brake output (brake_kpa=<n>.<d>)'
 expect '^# every request of this run, as vsigd logged it \(distinct lines\):$' \
   '# every request of this run (the closing list of served lines)'
 

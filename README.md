@@ -174,8 +174,11 @@ You need a Linux x86_64 host (WSL2 works) with:
 - **rustup's cargo of the same version**, since QNX's package has no cargo:
   `rustup toolchain install 1.85.1 --profile minimal` and, for lint,
   `rustup component add rustfmt clippy --toolchain 1.85.1`.
-- **QEMU with KVM** (`sudo apt install qemu-system-x86 qemu-utils`, user in the
-  `kvm` group) and **clang** for bindgen (`sudo apt install clang libclang-dev`).
+- **QEMU with KVM** (`sudo apt install qemu-system-x86 qemu-utils`, then
+  `sudo usermod -aG kvm $USER` and log in again, or run `wsl --shutdown` on
+  WSL2, so the group applies) and **clang** for bindgen
+  (`sudo apt install clang libclang-dev`). The target gets 1.5 GB of memory;
+  `QNX_QEMU_RAM=1024 tools/qemu-up.sh` gives it less on a busy host.
 
 [docs/toolchain.md](docs/toolchain.md) has the details and the exact versions
 used. Then:
@@ -190,7 +193,7 @@ cargo run -p qnx-ipc --example ping_pong --target $QNX_RUST_TARGET   # runs on Q
 tools/demo.sh             # the vehicle-signals demo, narrated
 tools/test-all.sh         # lint, docs, every test on QNX, demo check; writes docs/test-log.txt
 
-env -u RUSTC cargo doc --no-deps --workspace --target x86_64-unknown-linux-gnu --open   # API docs
+env -u RUSTC cargo doc --no-deps --workspace --target x86_64-unknown-linux-gnu    # API docs in $CARGO_TARGET_DIR/x86_64-unknown-linux-gnu/doc (add --open if you have a browser)
 tools/qemu-down.sh        # stop the target
 ```
 

@@ -181,7 +181,15 @@ impl Device for Store {
 fn write_then_read_back() {
     let (path, running) = spawn("store", Store::default());
     let payload: Vec<u8> = (0..5000u32).map(|i| (i % 253) as u8).collect();
-    std::fs::write(&path, &payload).expect("write");
+    // One write(2) call, so a manager that took only part of the data would show
+    // a short count here (std::fs::write would retry the rest and hide it).
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open for write");
+    let n = std::io::Write::write(&mut file, &payload).expect("write");
+    assert_eq!(n, payload.len(), "one write call takes the whole payload");
+    drop(file);
     assert_eq!(std::fs::read(&path).expect("read back"), payload);
     drop_with_deadline(running);
 }

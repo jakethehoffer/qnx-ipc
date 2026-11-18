@@ -37,10 +37,23 @@ fi
 if [ -f "$out/qemu.pid" ] && kill -0 "$(cat "$out/qemu.pid")" 2>/dev/null; then
   echo "QNX target already running (pid $(cat "$out/qemu.pid"))"
 else
+  # Just after WSL starts, udev can take a few seconds to give the kvm group
+  # access to /dev/kvm. Starting before then falls back to a far slower guest.
+  for _ in $(seq 1 15); do
+    { [ ! -e /dev/kvm ] || [ -w /dev/kvm ]; } && break
+    sleep 1
+  done
   accel=(-cpu max)
   [ -w /dev/kvm ] && accel=(-enable-kvm -cpu host)
+  if [ "${accel[0]}" = -enable-kvm ]; then
+    echo "Starting the QNX target with KVM"
+  else
+    echo "Starting the QNX target without KVM (no writable /dev/kvm): expect it to be slow" >&2
+  fi
   rm -f "$out/qemu.out"
-  qemu-system-x86_64 "${accel[@]}" -smp 2 -m 1536 \
+  # QNX_QEMU_RAM (MB) lets a host short of memory give the target less. 1024 is
+  # enough for every test and the demo.
+  qemu-system-x86_64 "${accel[@]}" -smp 2 -m "${QNX_QEMU_RAM:-1536}" \
     -drive "file=$out/disk-qemu.vmdk,if=ide,id=drv0" \
     -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
     -device virtio-net-pci,netdev=net0 \

@@ -141,10 +141,16 @@ impl<'b> Request<'b> {
     /// length in bytes, so [`Connection::send_bytes`](crate::Connection::send_bytes)
     /// can report it.
     ///
-    /// If the reply fails, the request is dropped and so answers `ENOSYS`.
+    /// If the reply fails, the client is no longer waiting on this request
+    /// (it is gone, or a signal or timeout already unblocked it), so no second
+    /// answer is sent: the receive id may soon name another client. A reply the
+    /// kernel cannot write into the client's buffer does not fail here. QNX
+    /// unblocks that client with `EFAULT` instead.
     pub fn reply<R: bytemuck::Pod>(mut self, reply: &R) -> Result<()> {
+        // One answer per request, whether or not the kernel accepts it.
+        self.answered = true;
         // SAFETY: `reply` is a live, initialized `R` of `size_of::<R>()` bytes that
-        // the kernel only reads. `rcvid` is a received, not yet answered message.
+        // the kernel only reads. `rcvid` is a received message not answered before.
         let rc = unsafe {
             sys::MsgReply(
                 self.rcvid,
@@ -156,7 +162,6 @@ impl<'b> Request<'b> {
         if rc == -1 {
             return Err(Error::last_os());
         }
-        self.answered = true;
         Ok(())
     }
 
@@ -168,18 +173,19 @@ impl<'b> Request<'b> {
     /// returns `Err(Error::Os(EINVAL))`, and the dropped request answers
     /// `ENOSYS`.
     ///
-    /// If the error reply fails, the request is dropped and so answers `ENOSYS`.
+    /// If the error reply fails, the client is no longer waiting on this
+    /// request, and no second answer is sent.
     pub fn reply_error(mut self, errno: i32) -> Result<()> {
         if errno <= 0 {
             return Err(Error::Os(sys::EINVAL as i32));
         }
-        // SAFETY: MsgError takes only integers. `rcvid` is a received, not yet
-        // answered message.
+        self.answered = true;
+        // SAFETY: MsgError takes only integers. `rcvid` is a received message not
+        // answered before.
         let rc = unsafe { sys::MsgError(self.rcvid, errno as c_int) };
         if rc == -1 {
             return Err(Error::last_os());
         }
-        self.answered = true;
         Ok(())
     }
 }

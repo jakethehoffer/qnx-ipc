@@ -204,7 +204,8 @@ one. What it cannot cover (a leaked request, `panic = "abort"`) is under
 | Message shorter than its type | the server's `decode` returns `Error::Truncated`, never reads past the data; the client gets the error the server chooses (`ENOSYS` if it just drops the request) | `messages::short_message_is_rejected` |
 | `on_message` panics inside `serve` | `EIO`; the server keeps serving | `serve::panicking_handler_replies_eio` |
 | `on_pulse` panics inside `serve` | (no client waits) the loop keeps serving | `serve::panicking_pulse_handler_keeps_serving` |
-| `MsgReply` or `MsgError` itself fails | `answered` stays false, so `Drop` sends `MsgError(ENOSYS)`. Usually the call failed because the client is gone, and this fallback fails harmlessly too. In the rare case that a failed `MsgReply` was still delivered, the client is already unblocked, its receive id can be reused by another message, and the fallback `ENOSYS` may then answer that other message (see Known limits). | (no test) |
+| `MsgReply` or `MsgError` itself fails | Nothing more: the client is no longer waiting on that receive id (it is gone, or a signal or timeout unblocked it), so `Request` counts the attempt as its one answer and `Drop` sends nothing. A second answer could reach another message that reuses the id. | (no test) |
+| Reply cannot be written into the client's reply buffer | `EFAULT`, from the kernel. The server's `MsgReply` succeeds, so this is not a failed reply | `messages::reply_into_bad_client_buffer_gives_client_efault` |
 | QNX system message (kinds up to 0x1FF) on a `NamedChannel` | `_IO_CONNECT` gets `EOK`, others `ENOSYS`; the handler never sees them | `names::system_messages_answered_transparently` |
 | Client process dies | the server gets a `PulseKind::Disconnect` pulse; the server connection is released (by construction: `receive` calls `ConnectDetach(scoid)`; the test checks only the pulse) | `pulses::client_exit_delivers_disconnect` |
 | `Device` method panics | `EIO`; the manager keeps serving (the next open works) | `resmgr::panicking_device_returns_eio` |
@@ -226,11 +227,6 @@ These are honest edges of the current design, not hidden bugs:
 - **A leaked `Request` leaves its client blocked.** Rust allows
   `std::mem::forget`, and a forgotten request never runs its `Drop`. The
   library cannot answer what it is not told about.
-- **A failed but delivered `MsgReply`.** If `MsgReply` returns an error even
-  though the reply reached the client, `Request` falls back to
-  `MsgError(ENOSYS)` on a receive id that may by then belong to another
-  client's message, which would get that `ENOSYS`. This path has not been
-  seen; a failing `MsgReply` normally means the client is gone.
 - **A request whose client is gone.** If the client dies, or is unblocked by a
   signal or timeout on a channel without `ChannelFlags::UNBLOCK`, while the
   server holds its `Request`, the request's receive id no longer belongs to

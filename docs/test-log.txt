@@ -27,6 +27,7 @@ test rust_client_talks_to_c_server ... ok
 test dropped_request_unblocks_client ... ok
 test ping_pong_round_trip ... ok
 test reply_error_rejects_non_positive_errno ... ok
+test reply_into_bad_client_buffer_gives_client_efault ... ok
 test request_reports_sender ... ok
 test short_message_is_rejected ... ok
 test unknown_kind_gets_enosys ... ok
