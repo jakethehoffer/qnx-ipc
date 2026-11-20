@@ -69,6 +69,17 @@ fn assert_took(start: Instant, timeout: Duration, what: &str) {
     );
 }
 
+/// Waits until the server thread says it is about to receive, then a little
+/// longer, so it is blocked in receive before the client sends. Otherwise a
+/// slow host could make the client time out before the server receives, and
+/// the test would check the wrong blocked state.
+fn wait_until_receiving(ready: &mpsc::Receiver<()>) {
+    ready
+        .recv_timeout(Duration::from_secs(10))
+        .expect("server thread started");
+    thread::sleep(Duration::from_millis(200));
+}
+
 fn test_name(test: &str) -> String {
     format!("qnx-ipc-test-{}-{test}", std::process::id())
 }
@@ -147,7 +158,9 @@ fn send_timeout_while_server_holds_request() {
     let conn = Connection::to_local(channel.id()).expect("connection");
     let (got, got_rx) = mpsc::channel::<()>();
     let (release, release_rx) = mpsc::channel::<()>();
+    let (ready, ready_rx) = mpsc::channel::<()>();
     let server = thread::spawn(move || {
+        ready.send(()).unwrap();
         let mut buf = RecvBuf::with_capacity(64);
         let received = channel
             .receive_timeout(&mut buf, Duration::from_secs(10))
@@ -162,6 +175,7 @@ fn send_timeout_while_server_holds_request() {
         drop(req);
     });
 
+    wait_until_receiving(&ready_rx);
     let start = Instant::now();
     let r: qnx_ipc::Result<Pong> = conn.send_timeout(&Ping { n: 1 }, SHORT);
     assert_eq!(r, Err(Error::Os(ETIMEDOUT)));
@@ -181,7 +195,9 @@ fn send_timeout_with_unblock_waits_for_the_answer() {
     let _dog = watchdog("send_timeout_with_unblock_waits_for_the_answer");
     let channel = Channel::new(ChannelFlags::UNBLOCK).expect("channel");
     let conn = Connection::to_local(channel.id()).expect("connection");
+    let (ready, ready_rx) = mpsc::channel::<()>();
     let server = thread::spawn(move || {
+        ready.send(()).unwrap();
         let mut req_buf = RecvBuf::with_capacity(64);
         let received = channel
             .receive_timeout(&mut req_buf, Duration::from_secs(10))
@@ -198,6 +214,7 @@ fn send_timeout_with_unblock_waits_for_the_answer() {
         kind
     });
 
+    wait_until_receiving(&ready_rx);
     let start = Instant::now();
     let r: qnx_ipc::Result<Pong> = conn.send_timeout(&Ping { n: 1 }, SHORT);
     let took = start.elapsed();
@@ -308,4 +325,62 @@ fn named_receive_timeout_spans_system_messages() {
         Some(Error::Os(sys::ENOSYS as i32)),
         "the system message arrived during the wait and was answered"
     );
+}
+
+#[test]
+fn send_timeout_zero_with_server_waiting() {
+    // Even with the server already blocked in receive, a zero-timeout send
+    // fails with ETIMEDOUT and the server gets nothing (seen on QNX 8.0).
+    let _dog = watchdog("send_timeout_zero_with_server_waiting");
+    let channel = Channel::new(ChannelFlags::empty()).expect("channel");
+    let conn = Connection::to_local(channel.id()).expect("connection");
+    let (ready, ready_rx) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        ready.send(()).unwrap();
+        let mut buf = RecvBuf::with_capacity(64);
+        // Bound first so the borrow of `buf` ends before the closure returns.
+        #[allow(clippy::let_and_return)]
+        let err = match channel.receive_timeout(&mut buf, Duration::from_secs(2)) {
+            Err(e) => e,
+            Ok(other) => panic!("the zero-timeout message was delivered: {other:?}"),
+        };
+        err
+    });
+    wait_until_receiving(&ready_rx);
+
+    let start = Instant::now();
+    let r: qnx_ipc::Result<Pong> = conn.send_timeout(&Ping { n: 9 }, Duration::ZERO);
+    let took = start.elapsed();
+    assert_eq!(r, Err(Error::Os(ETIMEDOUT)));
+    assert!(took < Duration::from_secs(1), "zero send waited {took:?}");
+    assert_eq!(server.join().unwrap(), Error::Os(ETIMEDOUT));
+}
+
+#[test]
+fn named_channel_gets_coid_death_pulse() {
+    // A `name_attach` channel is told when a channel this process holds a
+    // connection to is destroyed: a CoidDeath pulse whose value is that coid.
+    let _dog = watchdog("named_channel_gets_coid_death_pulse");
+    let name = test_name("coid-death");
+    let named = NamedChannel::attach(&name).expect("attach");
+    let channel = Channel::new(ChannelFlags::empty()).expect("channel");
+    let conn = Connection::to_local(channel.id()).expect("connection");
+    let coid = conn.coid();
+    drop(channel);
+
+    let mut buf = RecvBuf::with_capacity(64);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        match named.receive_timeout(&mut buf, left) {
+            // Other tests here destroy channels too; wait for this coid's.
+            Ok(Received::Pulse(pulse)) if pulse.kind() == PulseKind::CoidDeath => {
+                if pulse.value == coid {
+                    break;
+                }
+            }
+            other => panic!("expected a CoidDeath pulse for coid {coid:#x}, got {other:?}"),
+        };
+    }
+    drop(conn);
 }

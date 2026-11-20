@@ -53,6 +53,7 @@ test panicking_pulse_handler_keeps_serving ... ok
 test serve_stops_on_break ... ok
 
 ### timeouts (tests/timeouts.rs)
+test named_channel_gets_coid_death_pulse ... ok
 test named_receive_timeout_spans_system_messages ... ok
 test receive_timeout_when_nothing_arrives ... ok
 test receive_timeout_zero_polls ... ok
@@ -61,6 +62,7 @@ test send_timeout_to_named_channel_nobody_receives ... ok
 test send_timeout_when_nobody_receives ... ok
 test send_timeout_while_server_holds_request ... ok
 test send_timeout_with_unblock_waits_for_the_answer ... ok
+test send_timeout_zero_with_server_waiting ... ok
 
 ### qnx_resmgr (src/lib.rs)
 test manager::tests::rejects_relative_and_nul_paths ... ok

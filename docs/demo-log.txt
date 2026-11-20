@@ -11,8 +11,8 @@ vsigd: serving channel "vehicle", /dev/vehicle/speed and /dev/vehicle/brake (own
 watchdog: started safety-client
 watchdog: started infotainment-client
 vsigd: hello from safety-client
-vsigd: hello from infotainment-client
 safety-client: running at priority 40 (SCHED_FIFO), reading brake pressure
+vsigd: hello from infotainment-client
 infotainment-client: running at priority 10 (SCHED_FIFO), reading speed
 
 == 5. priority inheritance: vsigd (own priority 20) runs each request at its client's priority
@@ -21,9 +21,9 @@ vsigd: served infotainment-client at priority 10
 
 == 6. any program can read the signals as files
 # cat /dev/vehicle/speed
-speed_kmh=101.2
+speed_kmh=99.9
 # cat /dev/vehicle/brake
-brake_kpa=666.8
+brake_kpa=753.8
 
 == 7. freeze the infotainment client
 # kill -STOP <infotainment_client pid>

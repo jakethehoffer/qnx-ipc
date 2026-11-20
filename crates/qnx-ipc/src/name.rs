@@ -77,8 +77,8 @@ impl NamedChannel {
     /// connection has already been detached.
     /// These include [`PulseKind::CoidDeath`](crate::PulseKind::CoidDeath)
     /// pulses: on QNX 8.0 a `name_attach` channel gets one whenever a channel
-    /// this process holds a connection to is destroyed (seen in the
-    /// `timeouts` tests).
+    /// this process holds a connection to is destroyed, with that connection
+    /// id as the value (checked by `timeouts::named_channel_gets_coid_death_pulse`).
     ///
     /// A kernel timeout armed with `TimerTimeout` just before this call applies
     /// to the first receive only: if that one gets a system message, the next

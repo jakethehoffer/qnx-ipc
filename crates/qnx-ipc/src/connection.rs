@@ -98,8 +98,10 @@ impl Connection {
     /// still blocked after `timeout`.
     ///
     /// The timeout covers both waits: for the server to receive the message,
-    /// and for its reply. A zero `timeout` fails at once unless the server is
-    /// already waiting to receive. Two cases to know:
+    /// and for its reply. A zero `timeout` fails at once with `ETIMEDOUT` and
+    /// delivers nothing, even to a server already waiting in receive (checked
+    /// on QNX 8.0 by `timeouts::send_timeout_zero_with_server_waiting`). Two
+    /// cases to know:
     ///
     /// - **The server already received the message, on a channel with
     ///   [`ChannelFlags::UNBLOCK`].** Every [`NamedChannel`] has it. QNX then

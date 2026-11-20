@@ -245,8 +245,10 @@ These are honest edges of the current design, not hidden bugs:
   `NamedChannel` has `_NTO_CHF_UNBLOCK`. Once the server has received a
   message there, the client's `send_timeout` stays blocked until the server
   answers; the server gets a `PulseKind::Unblock` pulse at the timeout and
-  should answer quickly. `serve` passes that pulse to `on_pulse`, which ignores
-  it by default. Without `UNBLOCK` the client returns `ETIMEDOUT` at once and
+  should answer quickly. It cannot yet tell which held request the pulse is
+  about: the pulse carries the client's receive id, `Pulse::value` keeps only
+  its low 32 bits, and `Request` does not expose its receive id. `serve` passes
+  the pulse to `on_pulse`, which ignores it by default. Without `UNBLOCK` the client returns `ETIMEDOUT` at once and
   the server is left holding a request whose client is gone (the item above).
 - **A `TimerTimeout` armed by hand before `NamedChannel::receive`** covers only
   its first internal receive, since an answered system message is followed by
