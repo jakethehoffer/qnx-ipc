@@ -51,10 +51,14 @@ else
     echo "Starting the QNX target without KVM (no writable /dev/kvm): expect it to be slow" >&2
   fi
   rm -f "$out/qemu.out"
+  # The disk is opened as the raw image, not through mkqnximage's 512-byte
+  # disk-qemu.vmdk descriptor: QEMU adds a line to that file on every boot that
+  # writes to the disk, and after about 20 boots it overflows, the extent line
+  # is cut off and QNX can no longer mount /boot, /system or /data.
   # QNX_QEMU_RAM (MB) lets a host short of memory give the target less. 1024 is
   # enough for every test and the demo.
   qemu-system-x86_64 "${accel[@]}" -smp 2 -m "${QNX_QEMU_RAM:-1536}" \
-    -drive "file=$out/disk-qemu.vmdk,if=ide,id=drv0" \
+    -drive "file=$out/disk-qemu,format=raw,if=ide,id=drv0" \
     -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:22" \
     -device virtio-net-pci,netdev=net0 \
     -object rng-random,filename=/dev/urandom,id=rng0 -device virtio-rng-pci,rng=rng0 \
