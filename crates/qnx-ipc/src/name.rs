@@ -2,6 +2,7 @@
 //! find it with [`Connection::open`](crate::Connection::open).
 
 use core::ptr::NonNull;
+use core::time::Duration;
 use std::ffi::CString;
 
 use qnx_ipc_sys as sys;
@@ -74,12 +75,33 @@ impl NamedChannel {
     /// Messages shorter than the 2-byte kind are returned as they are. Pulses
     /// are returned, and on a disconnect pulse the departed client's server
     /// connection has already been detached.
+    /// These include [`PulseKind::CoidDeath`](crate::PulseKind::CoidDeath)
+    /// pulses: on QNX 8.0 a `name_attach` channel gets one whenever a channel
+    /// this process holds a connection to is destroyed (seen in the
+    /// `timeouts` tests).
     ///
     /// A kernel timeout armed with `TimerTimeout` just before this call applies
     /// to the first receive only: if that one gets a system message, the next
-    /// receive is not covered.
+    /// receive is not covered. [`receive_timeout`](NamedChannel::receive_timeout)
+    /// has no such gap.
     pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Answer)
+        receive_on(self.chid, buf, SystemMessages::Answer, None)
+    }
+
+    /// Like [`receive`](NamedChannel::receive), but gives up with
+    /// `Err(Error::Os(ETIMEDOUT))` (see [`Error::is_timeout`]) if no message or
+    /// pulse for the caller has arrived after `timeout`. System messages
+    /// answered along the way count against the same `timeout`: each later
+    /// receive waits only for what is left of it. A zero `timeout` takes what
+    /// is already waiting, else fails at once.
+    ///
+    /// [`Error::is_timeout`]: crate::Error::is_timeout
+    pub fn receive_timeout<'b>(
+        &'b self,
+        buf: &'b mut RecvBuf,
+        timeout: Duration,
+    ) -> Result<Received<'b>> {
+        receive_on(self.chid, buf, SystemMessages::Answer, Some(timeout))
     }
 
     /// The serve loop of [`Channel::serve`](crate::Channel::serve) on this

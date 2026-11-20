@@ -3,7 +3,7 @@
 Safe Rust for QNX 8.0 native message passing, pulses and resource managers.
 
 Three crates: `qnx-ipc` (channels, typed messages, pulses, pulse timers, named
-channels), `qnx-resmgr` (implement a trait, get a `/dev` path that `cat` and C
+channels, send and receive timeouts), `qnx-resmgr` (implement a trait, get a `/dev` path that `cat` and C
 programs can use) and `qnx-ipc-sys` (bindings generated from the QNX SDP 8.0
 headers at build time). A vehicle-signals demo shows QNX priority inheritance,
 signals served as files, and a pulse-driven watchdog, with Rust and C programs
@@ -225,6 +225,7 @@ run on the host compiler):
 | Named channels: `name_attach`, `name_open`, `name_detach`, `name_close` | [`name.rs`](crates/qnx-ipc/src/name.rs), [`connection.rs`](crates/qnx-ipc/src/connection.rs) (`Connection::open`) |
 | Pulses and disconnect pulses: `MsgSendPulse`, `_PULSE_CODE_DISCONNECT` | [`pulse.rs`](crates/qnx-ipc/src/pulse.rs), [`connection.rs`](crates/qnx-ipc/src/connection.rs) (`send_pulse`), [`channel.rs`](crates/qnx-ipc/src/channel.rs) (`take_pulse`) |
 | Timers delivering pulses: `SIGEV_PULSE`, `timer_create` | [`timer.rs`](crates/qnx-ipc/src/timer.rs) (`PulseTimer::periodic`) |
+| Kernel timeouts on sends and receives: `TimerTimeout` (`_NTO_TIMEOUT_SEND`, `_REPLY`, `_RECEIVE`), and the `_NTO_CHF_UNBLOCK` case where QNX keeps a timed-out client waiting for its answer | [`timeout.rs`](crates/qnx-ipc/src/timeout.rs), `send_timeout` and `receive_timeout` in [`connection.rs`](crates/qnx-ipc/src/connection.rs), [`channel.rs`](crates/qnx-ipc/src/channel.rs) and [`name.rs`](crates/qnx-ipc/src/name.rs), tests in [`timeouts.rs`](crates/qnx-ipc/tests/timeouts.rs) |
 | Resource managers: `dispatch_create`, `resmgr_attach`, `iofunc_*`, `dispatch_block`/`dispatch_handler`, extended OCB and attribute | [`manager.rs`](crates/qnx-resmgr/src/manager.rs) (`Attached::new`, `serve`, `Drop`), C callbacks `io_read`, `io_write`, `io_devctl`, `ocb_calloc`, `ocb_free` in [`trampoline.rs`](crates/qnx-resmgr/src/trampoline.rs) |
 | Priority inheritance through message passing (`SchedGet`, `sched_curpriority`; clients at `SCHED_FIFO` 40 and 10) | [`demo/vsigd/src/main.rs`](demo/vsigd/src/main.rs) (`current_priority`), shown in [docs/demo-log.txt](docs/demo-log.txt) |
 | C and Rust over the same native messages (built with `qcc`) | [`c/`](c) (`ping_server.c`, `ping_client.c`, `infotainment_client.c`), tests in [`interop.rs`](crates/qnx-ipc/tests/interop.rs) |

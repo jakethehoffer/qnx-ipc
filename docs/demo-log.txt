@@ -11,8 +11,8 @@ vsigd: serving channel "vehicle", /dev/vehicle/speed and /dev/vehicle/brake (own
 watchdog: started safety-client
 watchdog: started infotainment-client
 vsigd: hello from safety-client
-safety-client: running at priority 40 (SCHED_FIFO), reading brake pressure
 vsigd: hello from infotainment-client
+safety-client: running at priority 40 (SCHED_FIFO), reading brake pressure
 infotainment-client: running at priority 10 (SCHED_FIFO), reading speed
 
 == 5. priority inheritance: vsigd (own priority 20) runs each request at its client's priority

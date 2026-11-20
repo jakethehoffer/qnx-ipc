@@ -19,6 +19,12 @@
 //!   the channel it came from, so it cannot outlive it.
 //! - [`Channel::serve`] runs a [`Handler`] over every message and pulse, with
 //!   each call inside `catch_unwind`.
+//! - [`Connection::send_timeout`] and [`Channel::receive_timeout`] (and the
+//!   `NamedChannel` and byte-message forms) give up with `ETIMEDOUT`
+//!   ([`Error::is_timeout`]) after a deadline, through the kernel's
+//!   `TimerTimeout`. On a channel with [`ChannelFlags::UNBLOCK`], which every
+//!   `NamedChannel` has, QNX keeps a client whose message was already received
+//!   waiting for its answer; see `send_timeout`.
 //! - [`Pulse`]s are small non-blocking notifications; a [`PulseTimer`] sends one
 //!   periodically and borrows its connection, so it cannot outlive it.
 //!
@@ -45,6 +51,7 @@ mod name;
 mod pulse;
 mod request;
 mod serve;
+mod timeout;
 mod timer;
 
 pub use channel::{Channel, ChannelFlags, Received, RecvBuf};

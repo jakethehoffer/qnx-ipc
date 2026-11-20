@@ -33,6 +33,13 @@ impl Error {
         Error::Os(io::Error::last_os_error().raw_os_error().unwrap_or(0))
     }
 
+    /// Whether this is a timeout, `Error::Os(ETIMEDOUT)`, as returned by the
+    /// `_timeout` methods such as
+    /// [`Connection::send_timeout`](crate::Connection::send_timeout).
+    pub fn is_timeout(&self) -> bool {
+        *self == Error::Os(qnx_ipc_sys::ETIMEDOUT as i32)
+    }
+
     /// The `errno` value if this is an OS error.
     pub fn errno(&self) -> Option<i32> {
         match *self {

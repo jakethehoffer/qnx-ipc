@@ -52,7 +52,7 @@ pub(crate) fn serve_on<H: Handler>(
     handler: &mut H,
 ) -> Result<()> {
     loop {
-        let received = match receive_on(chid, buf, system) {
+        let received = match receive_on(chid, buf, system, None) {
             Ok(received) => received,
             Err(Error::Os(errno)) if errno == qnx_ipc_sys::EINTR as i32 => continue,
             Err(e) => return Err(e),

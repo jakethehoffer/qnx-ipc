@@ -2,11 +2,14 @@
 
 use core::ffi::{c_int, c_long};
 use core::mem::size_of;
+use core::time::Duration;
+use std::time::Instant;
 
 use qnx_ipc_sys as sys;
 
 use crate::pulse::Pulse;
 use crate::request::{Request, SenderInfo};
+use crate::timeout;
 use crate::{Error, Result};
 
 bitflags::bitflags! {
@@ -87,7 +90,19 @@ impl Channel {
     /// This makes no kernel call before the receive itself, so a kernel timeout
     /// armed with `TimerTimeout` just before it applies to the receive.
     pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Deliver)
+        receive_on(self.chid, buf, SystemMessages::Deliver, None)
+    }
+
+    /// Like [`receive`](Channel::receive), but gives up with
+    /// `Err(Error::Os(ETIMEDOUT))` (see [`Error::is_timeout`]) if nothing has
+    /// arrived after `timeout`. A zero `timeout` takes a message or pulse that
+    /// is already waiting, else fails at once.
+    pub fn receive_timeout<'b>(
+        &'b self,
+        buf: &'b mut RecvBuf,
+        timeout: Duration,
+    ) -> Result<Received<'b>> {
+        receive_on(self.chid, buf, SystemMessages::Deliver, Some(timeout))
     }
 }
 
@@ -106,16 +121,39 @@ pub(crate) enum SystemMessages {
 /// body of [`Channel::receive`] and
 /// [`NamedChannel::receive`](crate::NamedChannel::receive).
 ///
-/// The first kernel call is the receive, so a `TimerTimeout` armed just before
-/// applies to it. With [`SystemMessages::Answer`], a system message answered
-/// here is followed by another receive that the timeout no longer covers.
+/// With `timeout`, every receive is armed with what is left of it, so system
+/// messages answered along the way do not stretch the wait; when nothing is
+/// left it fails with `ETIMEDOUT`. Without `timeout`, the first kernel call is
+/// the receive, so a `TimerTimeout` armed just before applies to it, and with
+/// [`SystemMessages::Answer`] a system message answered here is followed by
+/// another receive that the caller's timeout no longer covers.
 pub(crate) fn receive_on(
     chid: i32,
     buf: &mut RecvBuf,
     system: SystemMessages,
+    timeout: Option<Duration>,
 ) -> Result<Received<'_>> {
+    // `None` inside means a deadline too far away for `Instant`: every receive
+    // is then armed with the whole timeout.
+    let deadline = timeout.map(|t| Instant::now().checked_add(t));
+    let mut first = true;
     loop {
         let mut info = sys::_msg_info64::default();
+        if let (Some(full), Some(deadline)) = (timeout, deadline) {
+            let left = match deadline {
+                Some(at) if !first => {
+                    let left = at.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        return Err(Error::Os(sys::ETIMEDOUT as i32));
+                    }
+                    left
+                }
+                _ => full,
+            };
+            // Armed last: the receive must be the next kernel call.
+            timeout::arm(timeout::RECEIVE, left)?;
+        }
+        first = false;
         // SAFETY: the kernel writes at most `buf.data.len()` bytes into `buf.data`,
         // which is live and exclusively borrowed for the call, and fills `info`, a
         // live local of the type MsgReceive takes.

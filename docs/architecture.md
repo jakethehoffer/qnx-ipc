@@ -145,6 +145,7 @@ soundness:
 | `request.rs` `reply` | `MsgReply` | `reply: &R` is live and initialized for `size_of::<R>()` bytes (kernel reads only); `rcvid` not yet answered. |
 | `request.rs` `reply_error` | `MsgError` | Integers only; `rcvid` not yet answered. |
 | `request.rs` `Drop for Request` | `MsgError(ENOSYS or EIO)` | Runs only if `answered` is false; integers only; never panics. |
+| `timeout.rs` `arm` | `TimerTimeout(CLOCK_MONOTONIC, states, NULL, &ns, NULL)` | A null event means unblock the thread; `ns` is a live local the kernel only reads; the old-time pointer is null. Every caller builds its buffers and iovecs first and arms last, so the send or receive is the next kernel call. |
 | `timer.rs` `periodic` | `timer_create` | `event` is a fully initialized `sigevent` and `id` a live local; both outlive the call. |
 | `timer.rs` `periodic` | `timer_settime` | `value` is live and only read; `timer.id` is a live timer. |
 | `timer.rs` `Drop for PulseTimer` | `timer_delete` | `id` came from a successful `timer_create` and is deleted only here. |
@@ -240,9 +241,17 @@ These are honest edges of the current design, not hidden bugs:
 - **One dispatch thread per resource manager.** A `Device` method that does I/O
   on its own path would wait for itself; this is documented on
   `ResourceManager`.
-- **A `TimerTimeout` armed before `NamedChannel::receive`** covers only its
-  first internal receive, since an answered system message is followed by
-  another receive.
+- **A timeout cannot cut short a reply wait on an `UNBLOCK` channel.** Every
+  `NamedChannel` has `_NTO_CHF_UNBLOCK`. Once the server has received a
+  message there, the client's `send_timeout` stays blocked until the server
+  answers; the server gets a `PulseKind::Unblock` pulse at the timeout and
+  should answer quickly. `serve` passes that pulse to `on_pulse`, which ignores
+  it by default. Without `UNBLOCK` the client returns `ETIMEDOUT` at once and
+  the server is left holding a request whose client is gone (the item above).
+- **A `TimerTimeout` armed by hand before `NamedChannel::receive`** covers only
+  its first internal receive, since an answered system message is followed by
+  another receive. `NamedChannel::receive_timeout` re-arms each receive with
+  the time left, so it has no such gap.
 - **`Pulse` does not expose the `scoid`**, so a server cannot map a disconnect
   pulse to a per-client entry (the demo's `vsigd` keys clients by pid instead).
 - **Only x86_64 is tested.** The bindgen set-up has an aarch64 path that has not

@@ -2,12 +2,14 @@
 
 use core::ffi::{c_int, c_long, c_void};
 use core::mem::size_of;
+use core::time::Duration;
 
 use qnx_ipc_sys as sys;
 
 use crate::message::{Header, Message, UserKind, FIRST_USER_KIND};
 use crate::name::checked_name;
 use crate::pulse::PulseCode;
+use crate::timeout;
 use crate::{Error, Result};
 
 /// A connection to a channel, owned by this process. Dropping it detaches it
@@ -88,6 +90,48 @@ impl Connection {
     /// This makes no kernel call before the send itself, so a kernel timeout armed
     /// with `TimerTimeout` just before it applies to the send.
     pub fn send<M: Message, R: bytemuck::Pod>(&self, msg: &M) -> Result<R> {
+        self.send_within(msg, None)
+    }
+
+    /// Like [`send`](Connection::send), but gives up with
+    /// `Err(Error::Os(ETIMEDOUT))` (see [`Error::is_timeout`]) if the send is
+    /// still blocked after `timeout`.
+    ///
+    /// The timeout covers both waits: for the server to receive the message,
+    /// and for its reply. A zero `timeout` fails at once unless the server is
+    /// already waiting to receive. Two cases to know:
+    ///
+    /// - **The server already received the message, on a channel with
+    ///   [`ChannelFlags::UNBLOCK`].** Every [`NamedChannel`] has it. QNX then
+    ///   keeps the client blocked when the timeout expires and sends the server
+    ///   a [`PulseKind::Unblock`] pulse instead; the client waits until the
+    ///   server answers, and gets that answer. The timeout is a firm limit only
+    ///   while the message has not been received, or on a channel without
+    ///   `UNBLOCK`.
+    /// - **The server already received the message, on a channel without
+    ///   `UNBLOCK`.** The client gets `ETIMEDOUT` at once, but the server still
+    ///   holds a [`Request`](crate::Request) for it. Its answer then goes
+    ///   nowhere, or to another message that reused the receive id (see "Known
+    ///   limits" in `docs/architecture.md`).
+    ///
+    /// [`ChannelFlags::UNBLOCK`]: crate::ChannelFlags::UNBLOCK
+    /// [`NamedChannel`]: crate::NamedChannel
+    /// [`PulseKind::Unblock`]: crate::PulseKind::Unblock
+    pub fn send_timeout<M: Message, R: bytemuck::Pod>(
+        &self,
+        msg: &M,
+        timeout: Duration,
+    ) -> Result<R> {
+        self.send_within(msg, Some(timeout))
+    }
+
+    /// The body of [`send`](Connection::send) and
+    /// [`send_timeout`](Connection::send_timeout).
+    fn send_within<M: Message, R: bytemuck::Pod>(
+        &self,
+        msg: &M,
+        timeout: Option<Duration>,
+    ) -> Result<R> {
         let () = UserKind::<M>::OK;
         let header = Header {
             kind: M::KIND,
@@ -99,6 +143,10 @@ impl Connection {
             iov(msg as *const M as *mut c_void, size_of::<M>()),
         ];
         let riov = [iov(&mut reply as *mut R as *mut c_void, size_of::<R>())];
+        // Armed last: the send must be the next kernel call.
+        if let Some(timeout) = timeout {
+            timeout::arm(timeout::SEND, timeout)?;
+        }
         // SAFETY: each send iovec points at a live, initialized value of the stated
         // size, and the kernel only reads it. The reply iovec points at `reply`,
         // which is live for the call; the kernel writes at most `size_of::<R>()`
@@ -139,6 +187,30 @@ impl Connection {
     /// This makes no kernel call before the send itself, so a kernel timeout armed
     /// with `TimerTimeout` just before it applies to the send.
     pub fn send_bytes(&self, kind: u16, payload: &[u8], reply: &mut [u8]) -> Result<usize> {
+        self.send_bytes_within(kind, payload, reply, None)
+    }
+
+    /// Like [`send_bytes`](Connection::send_bytes), with a timeout that works
+    /// as in [`send_timeout`](Connection::send_timeout).
+    pub fn send_bytes_timeout(
+        &self,
+        kind: u16,
+        payload: &[u8],
+        reply: &mut [u8],
+        timeout: Duration,
+    ) -> Result<usize> {
+        self.send_bytes_within(kind, payload, reply, Some(timeout))
+    }
+
+    /// The body of [`send_bytes`](Connection::send_bytes) and
+    /// [`send_bytes_timeout`](Connection::send_bytes_timeout).
+    fn send_bytes_within(
+        &self,
+        kind: u16,
+        payload: &[u8],
+        reply: &mut [u8],
+        timeout: Option<Duration>,
+    ) -> Result<usize> {
         if kind < FIRST_USER_KIND {
             return Err(Error::Os(sys::EINVAL as i32));
         }
@@ -148,6 +220,10 @@ impl Connection {
             iov(payload.as_ptr() as *mut c_void, payload.len()),
         ];
         let riov = [iov(reply.as_mut_ptr().cast(), reply.len())];
+        // Armed last: the send must be the next kernel call.
+        if let Some(timeout) = timeout {
+            timeout::arm(timeout::SEND, timeout)?;
+        }
         // SAFETY: the send iovecs point at `header` and `payload`, live and
         // initialized for their stated lengths; the kernel only reads them. The
         // reply iovec points at `reply`, exclusively borrowed for the call; the
