@@ -7,6 +7,7 @@ use std::time::Instant;
 
 use qnx_ipc_sys as sys;
 
+use crate::clients::Clients;
 use crate::pulse::Pulse;
 use crate::request::{Request, SenderInfo};
 use crate::timeout;
@@ -37,6 +38,7 @@ bitflags::bitflags! {
 #[derive(Debug)]
 pub struct Channel {
     chid: i32,
+    clients: Clients,
 }
 
 impl Channel {
@@ -52,12 +54,20 @@ impl Channel {
         if chid == -1 {
             return Err(Error::last_os());
         }
-        Ok(Channel { chid })
+        Ok(Channel {
+            chid,
+            clients: Clients::new(flags.contains(ChannelFlags::DISCONNECT)),
+        })
     }
 
     /// The QNX channel id, for [`Connection::to_process`](crate::Connection::to_process).
     pub fn id(&self) -> i32 {
         self.chid
+    }
+
+    /// The channel's count of held requests, for the serve loop.
+    pub(crate) fn clients(&self) -> &Clients {
+        &self.clients
     }
 
     /// Blocks until a message or a pulse arrives, and receives it into `buf`.
@@ -68,14 +78,18 @@ impl Channel {
     /// [`Request::read_into`] to read the rest.
     ///
     /// On a disconnect pulse ([`PulseKind::Disconnect`](crate::PulseKind::Disconnect))
-    /// this detaches the kernel's server connection to the departed client
-    /// (`ConnectDetach(scoid)`) before returning the pulse, which frees it.
+    /// this releases the kernel's server connection to the departed client
+    /// (`ConnectDetach(scoid)`), which lets QNX give the scoid to a later
+    /// client. If requests of the departed client are still held (received
+    /// into other buffers and not dropped yet), the release waits for the
+    /// last of them, so their receive ids cannot come to name a request of
+    /// the next client.
     ///
     /// A received [`Request`] borrows both the channel and `buf`, so it cannot
     /// outlive the channel it came from, and destroying the channel cannot leave
-    /// a request answering a stale receive id. (A client that dies, or a reply
-    /// that fails after it was delivered, can still leave one; see the Known
-    /// limits in `docs/architecture.md`.)
+    /// a request answering a stale receive id. (A client that stops waiting
+    /// while it lives, or a reply that fails after it was delivered, can still
+    /// leave one; see the Known limits in `docs/architecture.md`.)
     ///
     /// ```compile_fail
     /// use qnx_ipc::{Channel, ChannelFlags, RecvBuf};
@@ -90,7 +104,7 @@ impl Channel {
     /// This makes no kernel call before the receive itself, so a kernel timeout
     /// armed with `TimerTimeout` just before it applies to the receive.
     pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Deliver, None)
+        receive_on(self.chid, &self.clients, buf, SystemMessages::Deliver, None)
     }
 
     /// Like [`receive`](Channel::receive), but gives up with
@@ -102,7 +116,13 @@ impl Channel {
         buf: &'b mut RecvBuf,
         timeout: Duration,
     ) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Deliver, Some(timeout))
+        receive_on(
+            self.chid,
+            &self.clients,
+            buf,
+            SystemMessages::Deliver,
+            Some(timeout),
+        )
     }
 }
 
@@ -119,7 +139,8 @@ pub(crate) enum SystemMessages {
 
 /// Receives the next message or pulse on channel `chid` into `buf`; the shared
 /// body of [`Channel::receive`] and
-/// [`NamedChannel::receive`](crate::NamedChannel::receive).
+/// [`NamedChannel::receive`](crate::NamedChannel::receive). `clients` is that
+/// channel's count of held requests.
 ///
 /// With `timeout`, every receive is armed with what is left of it, so system
 /// messages answered along the way do not stretch the wait; when nothing is
@@ -127,12 +148,13 @@ pub(crate) enum SystemMessages {
 /// the receive, so a `TimerTimeout` armed just before applies to it, and with
 /// [`SystemMessages::Answer`] a system message answered here is followed by
 /// another receive that the caller's timeout no longer covers.
-pub(crate) fn receive_on(
+pub(crate) fn receive_on<'b>(
     chid: i32,
-    buf: &mut RecvBuf,
+    clients: &'b Clients,
+    buf: &'b mut RecvBuf,
     system: SystemMessages,
     timeout: Option<Duration>,
-) -> Result<Received<'_>> {
+) -> Result<Received<'b>> {
     // `None` inside means a deadline too far away for `Instant`: every receive
     // is then armed with the whole timeout.
     let deadline = timeout.map(|t| Instant::now().checked_add(t));
@@ -169,7 +191,7 @@ pub(crate) fn receive_on(
             return Err(Error::last_os());
         }
         if rcvid == 0 {
-            return Ok(Received::Pulse(take_pulse(buf)));
+            return Ok(Received::Pulse(take_pulse(buf, clients)));
         }
         let len = usize::try_from(info.msglen)
             .unwrap_or(0)
@@ -181,17 +203,20 @@ pub(crate) fn receive_on(
                 continue;
             }
         }
+        clients.hold(info.scoid);
         return Ok(Received::Message(Request::new(
             rcvid,
             &buf.data[..len],
             SenderInfo::from_info(&info),
+            clients,
         )));
     }
 }
 
-/// Decodes the pulse the kernel just wrote at the start of `buf`, detaching the
-/// departed client's server connection if it is a disconnect pulse.
-fn take_pulse(buf: &RecvBuf) -> Pulse {
+/// Decodes the pulse the kernel just wrote at the start of `buf`. On a
+/// disconnect pulse, tells `clients` that the client is gone, which detaches
+/// its server connection now or when its last held request is dropped.
+fn take_pulse(buf: &RecvBuf, clients: &Clients) -> Pulse {
     // SAFETY: on a pulse the kernel wrote a `_pulse` at the start of `buf.data`,
     // which is at least `size_of::<_pulse>()` bytes long (RecvBuf::with_capacity
     // guarantees it). `read_unaligned` copes with the byte buffer's alignment, and
@@ -200,18 +225,17 @@ fn take_pulse(buf: &RecvBuf) -> Pulse {
     let pulse: sys::_pulse = unsafe { buf.data.as_ptr().cast::<sys::_pulse>().read_unaligned() };
     // SAFETY: `sival_int` overlaps the start of the union; any bits are a valid i32.
     let value = unsafe { pulse.value.sival_int };
+    // SAFETY: `sival_long` is the union's full width, all of it written by the
+    // kernel or zeroed by `RecvBuf`; any bits are a valid integer.
+    let value_long: i64 = unsafe { pulse.value.sival_long };
     if i32::from(pulse.code) == sys::_PULSE_CODE_DISCONNECT {
-        // SAFETY: on a disconnect pulse `scoid` is the kernel's server connection
-        // to the departed client, which stays allocated until the server detaches
-        // it. ConnectDetach takes only an integer; a failure leaves nothing to
-        // clean up and is ignored.
-        unsafe {
-            sys::ConnectDetach(pulse.scoid);
-        }
+        clients.departed(pulse.scoid);
     }
     Pulse {
         code: pulse.code,
         value,
+        value_long,
+        scoid: pulse.scoid,
     }
 }
 

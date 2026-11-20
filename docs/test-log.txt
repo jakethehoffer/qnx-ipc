@@ -19,6 +19,11 @@ README demo excerpt = docs/demo-log.txt from step 3 ... ok
 ### errors (tests/errors.rs)
 test bad_connection_reports_errno ... ok
 
+### held (tests/held.rs)
+test dead_client_request_cannot_answer_the_next_client ... ok
+test reply_bytes_reaches_send_bytes ... ok
+test unblock_pulse_names_the_request_that_timed_out ... ok
+
 ### interop (tests/interop.rs)
 test c_client_talks_to_rust_server ... ok
 test rust_client_talks_to_c_server ... ok

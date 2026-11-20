@@ -90,9 +90,22 @@ Two of these borrows exist because of real problems:
   error, shown by a `compile_fail` example in
   [`timer.rs`](../crates/qnx-ipc/src/timer.rs).
 
-`Channel::receive` also releases a kernel object the caller never sees: on a
-disconnect pulse it calls `ConnectDetach(scoid)` for the departed client's
-server connection, which QNX keeps allocated until the server detaches it.
+`Channel::receive` also releases a kernel object the caller never sees: the
+departed client's server connection (scoid), which QNX keeps allocated until
+the server calls `ConnectDetach(scoid)`. It does so on the disconnect pulse,
+unless requests of that client are still held (a server can hold a request and
+keep receiving into other buffers). Then the detach waits until the last of
+them is dropped. The reason, checked on the QEMU target: QNX 8.0 gives a
+detached scoid to the next client at once, and a receive id is made of the
+scoid, the client's thread and a message counter that starts again every 16384
+messages. Detaching early lets a held request of the dead client share its
+receive id with a request of the next client, whose answer it would then
+steal. [`clients.rs`](../crates/qnx-ipc/src/clients.rs) keeps the count, per
+channel and only on channels with `ChannelFlags::DISCONNECT` (every
+`NamedChannel`): one short mutex lock when a message is received and one when
+its request drops. `held::dead_client_request_cannot_answer_the_next_client`
+sets up exactly that collision; with the detach done at the pulse, its second
+client gets the dead client's `ENOSYS`.
 
 ## Why the public API is sound
 
@@ -125,7 +138,8 @@ soundness:
 | `channel.rs` `receive_on` | `MsgReceive` | Kernel writes at most `buf.data.len()` bytes into `buf.data`, which is exclusively borrowed for the call; `info` is a live local of the right type. |
 | `channel.rs` `take_pulse` | `read_unaligned` of `_pulse` | On a pulse the kernel wrote a `_pulse` at the start of the buffer; `RecvBuf::with_capacity` guarantees at least `size_of::<_pulse>()` bytes; every bit pattern is a valid `_pulse`. |
 | `channel.rs` `take_pulse` | read `sival_int` union field | It overlaps the start of the union; any bits are a valid `i32`. |
-| `channel.rs` `take_pulse` | `ConnectDetach(scoid)` | On a disconnect pulse `scoid` is the server connection to the departed client, which must be detached; integer only. |
+| `channel.rs` `take_pulse` | read `sival_long` union field | It is the union's full width, written by the kernel or zeroed by `RecvBuf`; any bits are a valid integer. |
+| `clients.rs` `detach` | `ConnectDetach(scoid)` | `scoid` came from a disconnect pulse, so it is the server connection to a departed client, which must be detached, once: `departed` runs once per pulse and either detaches or leaves it to the one `release` that finds no request held. Integer only. |
 | `channel.rs` `answer_system_message` | `MsgReply(rcvid, EOK, null, 0)` | `rcvid` is received and not yet answered; null with length 0 sends no data. |
 | `channel.rs` `answer_system_message` | `MsgError(rcvid, ENOSYS)` | Integers only; `rcvid` received and not yet answered. |
 | `channel.rs` `Drop for Channel` | `ChannelDestroy` | `chid` came from a successful `ChannelCreate` and is destroyed only here. |
@@ -143,6 +157,7 @@ soundness:
 | `name.rs` `Drop for NamedChannel` | `name_detach` | The pointer came from a successful `name_attach` and is detached only here. |
 | `request.rs` `read_into` | `MsgRead` | `out` is exclusively borrowed, at most `out.len()` bytes written; `rcvid` is not answered yet (answering consumes `self`), so the sender is still blocked and its message readable. |
 | `request.rs` `reply` | `MsgReply` | `reply: &R` is live and initialized for `size_of::<R>()` bytes (kernel reads only); `rcvid` not yet answered. |
+| `request.rs` `reply_bytes` | `MsgReply` | `reply: &[u8]` is live and initialized for `reply.len()` bytes (kernel reads only); `rcvid` not yet answered. |
 | `request.rs` `reply_error` | `MsgError` | Integers only; `rcvid` not yet answered. |
 | `request.rs` `Drop for Request` | `MsgError(ENOSYS or EIO)` | Runs only if `answered` is false; integers only; never panics. |
 | `timeout.rs` `arm` | `TimerTimeout(CLOCK_MONOTONIC, states, NULL, &ns, NULL)` | A null event means unblock the thread; `ns` is a live local the kernel only reads; the old-time pointer is null. Every caller builds its buffers and iovecs first and arms last, so the send or receive is the next kernel call. |
@@ -208,7 +223,9 @@ one. What it cannot cover (a leaked request, `panic = "abort"`) is under
 | `MsgReply` or `MsgError` itself fails | Nothing more: the client is no longer waiting on that receive id (it is gone, or a signal or timeout unblocked it), so `Request` counts the attempt as its one answer and `Drop` sends nothing. A second answer could reach another message that reuses the id. | (no test) |
 | Reply cannot be written into the client's reply buffer | `EFAULT`, from the kernel. The server's `MsgReply` succeeds, so this is not a failed reply | `messages::reply_into_bad_client_buffer_gives_client_efault` |
 | QNX system message (kinds up to 0x1FF) on a `NamedChannel` | `_IO_CONNECT` gets `EOK`, others `ENOSYS`; the handler never sees them | `names::system_messages_answered_transparently` |
-| Client process dies | the server gets a `PulseKind::Disconnect` pulse; the server connection is released (by construction: `receive` calls `ConnectDetach(scoid)`; the test checks only the pulse) | `pulses::client_exit_delivers_disconnect` |
+| Client process dies | the server gets a `PulseKind::Disconnect` pulse whose `scoid` names the client; the server connection is released | `pulses::client_exit_delivers_disconnect` (the pulse), `held::dead_client_request_cannot_answer_the_next_client` (the scoid and the release) |
+| Client process dies while the server holds its request | answering or dropping that request fails and reaches nobody, also not a new client: the dead client's server connection is kept until its last held request is dropped | `held::dead_client_request_cannot_answer_the_next_client` |
+| Client times out waiting for its reply on an `UNBLOCK` channel | it stays blocked; the server gets a `PulseKind::Unblock` pulse whose `rcvid()` equals the held request's `rcvid()`, and answers that request | `held::unblock_pulse_names_the_request_that_timed_out` |
 | `Device` method panics | `EIO`; the manager keeps serving (the next open works) | `resmgr::panicking_device_returns_eio` |
 | `Device` method returns an error | its `errno` (for example `ENOTTY` for an unknown `devctl` command) | `resmgr::devctl_round_trip` |
 | Resource manager stops with files open | those files are closed (their OCBs freed); later reads fail | `resmgr::drop_detaches_path` |
@@ -228,12 +245,28 @@ These are honest edges of the current design, not hidden bugs:
 - **A leaked `Request` leaves its client blocked.** Rust allows
   `std::mem::forget`, and a forgotten request never runs its `Drop`. The
   library cannot answer what it is not told about.
-- **A request whose client is gone.** If the client dies, or is unblocked by a
-  signal or timeout on a channel without `ChannelFlags::UNBLOCK`, while the
-  server holds its `Request`, the request's receive id no longer belongs to
-  that client. Answering it normally just fails, but if QNX has reused the id
-  for another message by then, that message gets the answer. The borrow on the
-  channel does not prevent this.
+- **A request whose client stopped waiting.** If a living client is unblocked
+  by a signal or timeout on a channel without `ChannelFlags::UNBLOCK` while the
+  server holds its `Request`, the request's receive id no longer belongs to a
+  waiting send. Answering it normally just fails. But if the same client
+  thread sends again and the channel's message counter has come round to the
+  same value (on QNX 8.0 that is exactly a multiple of 16384 messages later),
+  the new request has the same receive id and gets the old answer. Use
+  `UNBLOCK` when the server defers replies: the client then waits for its
+  answer and this cannot happen. (A client process that dies is covered: see
+  the scoid paragraph under [Ownership and `Drop` rules](#ownership-and-drop-rules).)
+- **A dead client's request on a channel without `ChannelFlags::DISCONNECT`.**
+  Such a channel gets no disconnect pulses, so the library never detaches a
+  scoid there and QNX never reuses one: a held request of a dead client cannot
+  reach a new client, but each dead client leaves its server connection
+  allocated. This is how QNX treats any server that does not ask for
+  disconnect pulses.
+- **Two threads receiving on one channel** leave a small window: one thread
+  has taken a message from the kernel but not yet counted its request when
+  the other thread gets the same client's disconnect pulse and detaches the
+  scoid. A server with one receiving thread has no such window.
+- **A leaked `Request` also keeps its client's scoid** if the client dies,
+  since the detach waits for a drop that never comes.
 - **`panic = "abort"`** turns the panic paths above into process aborts; the
   client then sees the server's death instead of `EIO`.
 - **Handler state after a caught panic** may be half-updated; `serve` uses
@@ -245,16 +278,16 @@ These are honest edges of the current design, not hidden bugs:
   `NamedChannel` has `_NTO_CHF_UNBLOCK`. Once the server has received a
   message there, the client's `send_timeout` stays blocked until the server
   answers; the server gets a `PulseKind::Unblock` pulse at the timeout and
-  should answer quickly. It cannot yet tell which held request the pulse is
-  about: the pulse carries the client's receive id, `Pulse::value` keeps only
-  its low 32 bits, and `Request` does not expose its receive id. `serve` passes
-  the pulse to `on_pulse`, which ignores it by default. Without `UNBLOCK` the client returns `ETIMEDOUT` at once and
-  the server is left holding a request whose client is gone (the item above).
+  should answer quickly. `Pulse::rcvid` says which held request the pulse is
+  about (it equals that request's `Request::rcvid`). `serve` passes the pulse
+  to `on_pulse`, which ignores it by default, and `serve` hands each request
+  to `on_message` by value, so a handler that defers replies has to keep the
+  requests itself with a receive loop of its own. Without `UNBLOCK` the client
+  returns `ETIMEDOUT` at once and the server is left holding a request whose
+  client stopped waiting (the item above).
 - **A `TimerTimeout` armed by hand before `NamedChannel::receive`** covers only
   its first internal receive, since an answered system message is followed by
   another receive. `NamedChannel::receive_timeout` re-arms each receive with
   the time left, so it has no such gap.
-- **`Pulse` does not expose the `scoid`**, so a server cannot map a disconnect
-  pulse to a per-client entry (the demo's `vsigd` keys clients by pid instead).
 - **Only x86_64 is tested.** The bindgen set-up has an aarch64 path that has not
   been run.

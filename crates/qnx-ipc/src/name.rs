@@ -8,6 +8,7 @@ use std::ffi::CString;
 use qnx_ipc_sys as sys;
 
 use crate::channel::{receive_on, SystemMessages};
+use crate::clients::Clients;
 use crate::serve::{serve_on, Handler};
 use crate::{Error, Received, RecvBuf, Result};
 
@@ -28,14 +29,16 @@ use crate::{Error, Received, RecvBuf, Result};
 pub struct NamedChannel {
     attach: NonNull<sys::name_attach_t>,
     chid: i32,
+    clients: Clients,
 }
 
 // SAFETY: `attach` points at the `name_attach_t` that name_attach allocated for
 // this value alone. It is never read after construction (the chid is copied out)
 // and is passed to name_detach once, in Drop, which may run on any thread.
 unsafe impl Send for NamedChannel {}
-// SAFETY: shared access only copies out `chid`; receiving on one channel from
-// several threads at once is supported by the kernel.
+// SAFETY: shared access only copies out `chid` and uses `clients`, which is
+// `Sync` (its list is behind a mutex); receiving on one channel from several
+// threads at once is supported by the kernel.
 unsafe impl Sync for NamedChannel {}
 
 impl NamedChannel {
@@ -54,7 +57,12 @@ impl NamedChannel {
         // SAFETY: name_attach succeeded, so `attach` points at a valid, initialized
         // `name_attach_t` that stays allocated until name_detach.
         let chid = unsafe { attach.as_ref().chid };
-        Ok(NamedChannel { attach, chid })
+        Ok(NamedChannel {
+            attach,
+            chid,
+            // name_attach creates the channel with `_NTO_CHF_DISCONNECT`.
+            clients: Clients::new(true),
+        })
     }
 
     /// The QNX channel id behind the name.
@@ -74,7 +82,8 @@ impl NamedChannel {
     /// connection to the channel.)
     /// Messages shorter than the 2-byte kind are returned as they are. Pulses
     /// are returned, and on a disconnect pulse the departed client's server
-    /// connection has already been detached.
+    /// connection is released as in [`Channel::receive`](crate::Channel::receive):
+    /// at once, or after the last request still held from that client.
     /// These include [`PulseKind::CoidDeath`](crate::PulseKind::CoidDeath)
     /// pulses: on QNX 8.0 a `name_attach` channel gets one whenever a channel
     /// this process holds a connection to is destroyed, with that connection
@@ -85,7 +94,7 @@ impl NamedChannel {
     /// receive is not covered. [`receive_timeout`](NamedChannel::receive_timeout)
     /// has no such gap.
     pub fn receive<'b>(&'b self, buf: &'b mut RecvBuf) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Answer, None)
+        receive_on(self.chid, &self.clients, buf, SystemMessages::Answer, None)
     }
 
     /// Like [`receive`](NamedChannel::receive), but gives up with
@@ -101,14 +110,26 @@ impl NamedChannel {
         buf: &'b mut RecvBuf,
         timeout: Duration,
     ) -> Result<Received<'b>> {
-        receive_on(self.chid, buf, SystemMessages::Answer, Some(timeout))
+        receive_on(
+            self.chid,
+            &self.clients,
+            buf,
+            SystemMessages::Answer,
+            Some(timeout),
+        )
     }
 
     /// The serve loop of [`Channel::serve`](crate::Channel::serve) on this
     /// channel, with system messages answered as in
     /// [`receive`](NamedChannel::receive).
     pub fn serve<H: Handler>(&self, buf: &mut RecvBuf, handler: &mut H) -> Result<()> {
-        serve_on(self.chid, SystemMessages::Answer, buf, handler)
+        serve_on(
+            self.chid,
+            &self.clients,
+            SystemMessages::Answer,
+            buf,
+            handler,
+        )
     }
 }
 

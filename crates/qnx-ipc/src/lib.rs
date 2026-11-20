@@ -25,6 +25,11 @@
 //!   `TimerTimeout`. On a channel with [`ChannelFlags::UNBLOCK`], which every
 //!   `NamedChannel` has, QNX keeps a client whose message was already received
 //!   waiting for its answer; see `send_timeout`.
+//! - A server may hold a [`Request`] and keep receiving into other buffers (a
+//!   deferred reply). An unblock pulse names the held request whose client
+//!   wants to stop waiting ([`Pulse::rcvid`], [`Request::rcvid`]), and a client
+//!   process that dies cannot pass its receive id on to the next client: its
+//!   server connection is released only after its last held request.
 //! - [`Pulse`]s are small non-blocking notifications; a [`PulseTimer`] sends one
 //!   periodically and borrows its connection, so it cannot outlive it.
 //!
@@ -44,6 +49,7 @@
 #![deny(missing_docs)]
 
 mod channel;
+mod clients;
 mod connection;
 mod error;
 mod message;
@@ -59,7 +65,7 @@ pub use connection::Connection;
 pub use error::{Error, Result};
 pub use message::{Header, Message};
 pub use name::NamedChannel;
-pub use pulse::{Pulse, PulseCode, PulseKind};
+pub use pulse::{Pulse, PulseCode, PulseKind, ReceiveId};
 pub use request::{Request, SenderInfo};
 pub use serve::Handler;
 pub use timer::PulseTimer;

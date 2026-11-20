@@ -5,7 +5,9 @@ use core::mem::size_of;
 
 use qnx_ipc_sys as sys;
 
+use crate::clients::Clients;
 use crate::message::{wire_len, Header, Message, UserKind};
+use crate::pulse::ReceiveId;
 use crate::{Error, Result};
 
 /// Who sent a request, from the kernel's `_msg_info`.
@@ -21,6 +23,13 @@ pub struct SenderInfo {
     /// The full length of the message the sender sent, which can be more than
     /// the receive buffer holds.
     pub srcmsglen: usize,
+    /// The server connection id (`scoid`): the kernel's number for this
+    /// client process on this channel. Every thread of one client process
+    /// has the same one, and the client's
+    /// [`Disconnect`](crate::PulseKind::Disconnect) pulse carries it in
+    /// [`Pulse::scoid`](crate::Pulse::scoid). QNX reuses the number for a
+    /// later client once the first one's connection is released.
+    pub scoid: i32,
 }
 
 impl SenderInfo {
@@ -30,6 +39,7 @@ impl SenderInfo {
             tid: info.tid,
             priority: i32::from(info.priority),
             srcmsglen: usize::try_from(info.srcmsglen).unwrap_or(0),
+            scoid: info.scoid,
         }
     }
 }
@@ -43,21 +53,39 @@ impl SenderInfo {
 /// `std::mem::forget` never runs its `Drop` and leaves its client blocked.)
 /// A request borrows its channel and receive buffer, so it cannot outlive
 /// the channel.
+///
+/// A server may hold a request while it receives more into other buffers (a
+/// deferred reply). If the client's process dies meanwhile, answering or
+/// dropping the request fails harmlessly: a channel with
+/// [`ChannelFlags::DISCONNECT`](crate::ChannelFlags::DISCONNECT) keeps the dead
+/// client's server connection until its last request is gone, so the receive
+/// id cannot pass to a new client.
 #[derive(Debug)]
 pub struct Request<'b> {
     rcvid: sys::rcvid_t,
     data: &'b [u8],
     sender: SenderInfo,
     answered: bool,
+    /// The channel's count of held requests, which this one is part of until
+    /// it drops.
+    clients: &'b Clients,
 }
 
 impl<'b> Request<'b> {
-    pub(crate) fn new(rcvid: sys::rcvid_t, data: &'b [u8], sender: SenderInfo) -> Request<'b> {
+    /// A request just received on the channel that `clients` belongs to. The
+    /// caller has already counted it there (`Clients::hold`).
+    pub(crate) fn new(
+        rcvid: sys::rcvid_t,
+        data: &'b [u8],
+        sender: SenderInfo,
+        clients: &'b Clients,
+    ) -> Request<'b> {
         Request {
             rcvid,
             data,
             sender,
             answered: false,
+            clients,
         }
     }
 
@@ -73,6 +101,13 @@ impl<'b> Request<'b> {
     /// Who sent the request.
     pub fn sender(&self) -> SenderInfo {
         self.sender
+    }
+
+    /// The kernel's id for this request. An
+    /// [`Unblock`](crate::PulseKind::Unblock) pulse names the request it is
+    /// about by the same id ([`Pulse::rcvid`](crate::Pulse::rcvid)).
+    pub fn rcvid(&self) -> ReceiveId {
+        ReceiveId(self.rcvid)
     }
 
     /// Decodes the payload as an `M`.
@@ -165,6 +200,30 @@ impl<'b> Request<'b> {
         Ok(())
     }
 
+    /// Replies with the bytes of `reply` and unblocks the sender. The reply
+    /// status is `reply.len()`, which
+    /// [`Connection::send_bytes`](crate::Connection::send_bytes) returns (cut
+    /// to the client's reply buffer). A failed reply is handled as in
+    /// [`reply`](Request::reply).
+    pub fn reply_bytes(mut self, reply: &[u8]) -> Result<()> {
+        self.answered = true;
+        // SAFETY: `reply` is live and initialized for `reply.len()` bytes that
+        // the kernel only reads. `rcvid` is a received message not answered
+        // before.
+        let rc = unsafe {
+            sys::MsgReply(
+                self.rcvid,
+                reply.len() as c_long,
+                reply.as_ptr().cast(),
+                reply.len() as sys::_Sizet,
+            )
+        };
+        if rc == -1 {
+            return Err(Error::last_os());
+        }
+        Ok(())
+    }
+
     /// Unblocks the sender with error `errno`: its `send` returns
     /// `Err(Error::Os(errno))`.
     ///
@@ -207,5 +266,8 @@ impl Drop for Request<'_> {
                 sys::MsgError(self.rcvid, errno as c_int);
             }
         }
+        // After the answer: if the client has departed and this was its last
+        // held request, its server connection is released now.
+        self.clients.release(self.sender.scoid);
     }
 }

@@ -75,6 +75,8 @@ fn pulse_kind_maps_kernel_codes() {
         Pulse {
             code: code as i8,
             value: 0,
+            value_long: 0,
+            scoid: 0,
         }
         .kind()
     };
